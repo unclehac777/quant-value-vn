@@ -1,6 +1,6 @@
 # Vietnam Quantitative Value Stock Screener
 
-A Python stock screener + **Streamlit dashboard** implementing Tobias Carlisle & Wesley Gray's **"Quantitative Value"** framework, adapted for Vietnam (HOSE + HNX). Data persisted in **Supabase** (PostgreSQL).
+A Python stock screener + **Streamlit dashboard** implementing Tobias Carlisle & Wesley Gray's **"Quantitative Value"** framework, adapted for Vietnam (HOSE + HNX + UpCom). Data persisted in **Supabase** (PostgreSQL).
 
 ## Features
 
