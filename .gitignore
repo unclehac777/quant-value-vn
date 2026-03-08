@@ -1,0 +1,7 @@
+.env
+venv/
+__pycache__/
+*.pyc
+screener.db
+_tmp_import.csv
+vietnam_value_screen_*.csv
