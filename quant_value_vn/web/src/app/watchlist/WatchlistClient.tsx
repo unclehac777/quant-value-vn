@@ -90,6 +90,13 @@ export default function WatchlistClient({ initialWatchlist, rankings }: { initia
             </TableRow>
           </TableHead>
           <TableBody>
+            {enrichedWatchlist.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={8} className="text-center py-12 text-gray-500 italic">
+                  No stocks in your watchlist yet. Start screening to add some!
+                </TableCell>
+              </TableRow>
+            )}
             {enrichedWatchlist.map((item) => (
               <TableRow key={item.ticker}>
                 <TableCell className="font-bold text-white">{item.ticker}</TableCell>
