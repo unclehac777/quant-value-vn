@@ -63,3 +63,16 @@ export async function updateWatchlistItem(ticker: string, data: { notes?: string
     body: JSON.stringify(data),
   });
 }
+export async function triggerScan(config: { max_stocks?: number, workers?: number, min_mcap?: number, max_am?: number } = {}) {
+  const defaults = {
+    max_stocks: 9999,
+    workers: 10,
+    min_mcap: 500000000, // 500M
+    max_am: 50.0
+  };
+  return fetchAPI("/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...defaults, ...config }),
+  });
+}
