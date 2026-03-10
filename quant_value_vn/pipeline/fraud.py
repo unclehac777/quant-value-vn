@@ -184,12 +184,16 @@ def remove_manipulators(
     """
     Remove companies with M-Score > threshold (likely manipulators).
 
-    Keeps stocks with M-Score <= threshold OR NaN (insufficient data).
+    Also removes stocks with NaN M-Score (insufficient data to verify)
+    as a conservative safety measure per the Quantitative Value framework.
     """
     initial = len(df)
-    mask = df["beneish_mscore"].isna() | (df["beneish_mscore"] <= threshold)
+    nan_count = df["beneish_mscore"].isna().sum()
+    mask = df["beneish_mscore"].notna() & (df["beneish_mscore"] <= threshold)
     df = df[mask].copy()
     removed = initial - len(df)
     if removed > 0:
-        logger.info("Fraud filter (M > %.2f): removed %d stocks", threshold, removed)
+        logger.info("Fraud filter (M > %.2f): removed %d stocks (%d manipulators, %d NaN)",
+                    threshold, removed, removed - nan_count, nan_count)
     return df
+

@@ -98,7 +98,7 @@ def compute_altman_zscore(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def remove_distressed(
-    df: pd.DataFrame, min_zscore: float = 1.81
+    df: pd.DataFrame, min_zscore: float = 1.5
 ) -> pd.DataFrame:
     """
     Remove stocks with high bankruptcy risk (Z-Score < threshold).
@@ -299,7 +299,7 @@ def compute_safety_scores(df: pd.DataFrame) -> pd.DataFrame:
 
 def apply_safety_filters(
     df: pd.DataFrame,
-    min_zscore: float = 1.81,
+    min_zscore: float = 1.5,
     min_fscore: int = 5,
     strict: bool = False,
 ) -> pd.DataFrame:

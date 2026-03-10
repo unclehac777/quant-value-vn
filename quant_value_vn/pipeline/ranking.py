@@ -28,12 +28,20 @@ logger = logging.getLogger(__name__)
 
 
 def remove_sectors(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove financials, banks, insurance — metrics unreliable for these."""
+    """Remove financials, banks, insurance, real estate — metrics unreliable for these."""
     if "sector" not in df.columns:
         return df
     initial = len(df)
-    mask = ~df["sector"].fillna("").str.lower().str.strip().isin(EXCLUDED_SECTORS)
-    df = df[mask].copy()
+    sector_lower = df["sector"].fillna("").str.lower().str.strip()
+
+    # Exact match
+    excluded = sector_lower.isin(EXCLUDED_SECTORS)
+
+    # Partial match: catch sub-sectors like "bất động sản và xây dựng"
+    for excl in EXCLUDED_SECTORS:
+        excluded |= sector_lower.str.contains(excl, na=False)
+
+    df = df[~excluded].copy()
     removed = initial - len(df)
     if removed > 0:
         logger.info("Sector filter: removed %d stocks", removed)
@@ -86,12 +94,12 @@ def rank_stocks(df: pd.DataFrame) -> pd.DataFrame:
     # Value rank: lower AM = cheaper = rank 1
     df["value_rank"] = df["acquirers_multiple"].rank(ascending=True, method="average")
 
-    # Re-rank quality within filtered set
+    # Re-rank quality within filtered set (using the new 5-year metrics)
     for col, asc in [
-        ("roa", False),
-        ("gross_profitability", False),
-        ("cfo_to_assets", False),
-        ("accruals", True),
+        ("ROA_5yr_avg", False),
+        ("ROC_5yr_avg", False),
+        ("FCF_assets_5yr_avg", False),
+        ("GM_stability", True),  # lower std dev = higher rank
     ]:
         if col in df.columns:
             vals = df[col].fillna(df[col].median() if df[col].notna().any() else 0)
@@ -100,7 +108,7 @@ def rank_stocks(df: pd.DataFrame) -> pd.DataFrame:
     rank_cols = [c for c in df.columns if c.endswith("_rank_f")]
     if rank_cols:
         df["quality_rank"] = df[rank_cols].sum(axis=1)
-        # Re-normalise quality_score in filtered set
+        # Re-normalise quality_score in filtered set (optional, for UI)
         qr = df["quality_rank"]
         qr_min, qr_max = qr.min(), qr.max()
         if qr_max > qr_min:
@@ -108,9 +116,17 @@ def rank_stocks(df: pd.DataFrame) -> pd.DataFrame:
                 (qr_max - qr) / (qr_max - qr_min) * 100
             ).round(1)
         df.drop(columns=rank_cols, inplace=True)
+    else:
+        df["quality_rank"] = 0
 
-    # Combined rank
-    df["combined_score"] = df["value_rank"] + df["quality_rank"]
+    # F-Score Signal Rank: higher F-score = better rank
+    if "piotroski_fscore" in df.columns:
+        df["signal_rank"] = df["piotroski_fscore"].rank(ascending=False, method="average")
+    else:
+        df["signal_rank"] = 0
+
+    # Combined rank = Value + Quality + Signal (lowest sum = best)
+    df["combined_score"] = df.get("value_rank", 0) + df.get("quality_rank", 0) + df.get("signal_rank", 0)
     df["combined_rank"] = df["combined_score"].rank(method="min").astype(int)
 
     df = df.sort_values("combined_rank").reset_index(drop=True)

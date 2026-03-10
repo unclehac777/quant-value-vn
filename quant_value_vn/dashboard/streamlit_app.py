@@ -221,6 +221,7 @@ if page == "🏠 Dashboard":
         show_cols = [
             "ticker", "combined_rank", "acquirers_multiple", "ebit_ev",
             "quality_score", "beneish_mscore", "probm",
+            "data_source_ttm", "data_year_ttm", "data_source_annual", "data_year_annual",
             "market_cap_b", "pe", "pb",
             "roa", "gross_profitability", "accruals", "cfo_to_assets", "roic", "debt_equity",
         ]
@@ -275,12 +276,12 @@ elif page == "📊 Screening Results":
             # Sidebar filters
             st.sidebar.subheader("🔍 Filters")
             if "acquirers_multiple" in df.columns:
-                am_max = float(max(df["acquirers_multiple"].max() or 20.0, 20.0))
-                am_range = st.sidebar.slider("Acquirer's Multiple", 0.0, am_max, (0.0, 20.0))
+                am_max = float(max(df["acquirers_multiple"].max() or 50.0, 50.0))
+                am_range = st.sidebar.slider("Acquirer's Multiple", 0.0, am_max, (0.0, am_max))
             else:
                 am_range = (0.0, 100.0)
             qs_range = st.sidebar.slider("Quality Score (0-100)", 0, 100, (0, 100))
-            max_pe = st.sidebar.number_input("Max P/E", value=50.0, step=5.0)
+            max_pe = st.sidebar.number_input("Max P/E", value=999.0, step=5.0)
             mscore_filter = st.sidebar.checkbox("Only M-Score <= -1.78", value=False)
 
             mask = pd.Series(True, index=df.index)
@@ -299,6 +300,7 @@ elif page == "📊 Screening Results":
             display_cols = [
                 "ticker", "combined_rank", "acquirers_multiple", "ebit_ev",
                 "quality_score", "beneish_mscore", "probm",
+                "data_source_ttm", "data_year_ttm", "data_source_annual", "data_year_annual",
                 "market_cap_b", "ev_b", "ebit", "revenue",
                 "pe", "pb", "roa", "roe", "roic",
                 "gross_profitability", "accruals", "cfo_to_assets",
@@ -858,14 +860,15 @@ elif page == "🔄 Run Screener":
 
         c1, c2, c3 = st.columns(3)
         max_stocks = c1.slider("Max stocks to scan", 50, 2000, 1500, step=50)
-        workers = c2.slider("Parallel workers", 1, 20, 10, step=1)
+        workers = c2.slider("Parallel workers", 1, 50, 30, step=1)
         delay_val = c3.slider("Request delay (sec)", 0.1, 1.0, 0.2, step=0.1)
 
-        c4, c5 = st.columns(2)
+        c4, c5, c6 = st.columns(3)
         min_mcap = c4.number_input("Min Market Cap (B VND)", value=500, step=100) * 1e9
         max_am = c5.number_input("Max Acquirer's Multiple", value=50.0, step=5.0)
+        skip_prefilter = c6.checkbox("Skip pre-filter (scan all exchanges)", value=False)
 
-        est_time = max_stocks * 5.0 / 60 / workers * 2
+        est_time = max_stocks * 3.0 / 60 / workers * 2
         st.caption(f"Estimated time: ~{max(1, est_time):.0f} min")
 
         if st.button("🚀 Run Full QV Pipeline", type="primary"):
@@ -885,6 +888,7 @@ elif page == "🔄 Run Screener":
                 workers=workers,
                 min_mcap=min_mcap,
                 max_am=max_am,
+                skip_prefilter=skip_prefilter,
                 save_to_db=True,
                 progress_callback=_progress,
             )

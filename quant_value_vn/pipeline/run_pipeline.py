@@ -55,6 +55,7 @@ def format_output(df: pd.DataFrame) -> pd.DataFrame:
         "fcf_yield", "pe", "pb", "debt_equity", "gross_margin",
         "net_margin", "beneish_mscore", "probm", "altman_zscore",
         "mom_2_12", "mom_12", "mom_1",
+        "ROA_5yr_avg", "ROC_5yr_avg", "FCF_assets_5yr_avg", "GM_stability"
     ):
         if c in out.columns:
             out[c] = out[c].round(2)
@@ -86,6 +87,7 @@ def run_pipeline(
     min_trading_days: int = MIN_TRADING_DAYS,
     skip_prefilter: bool = False,
     save_to_db: bool = True,
+    use_cache: bool = True,
     progress_callback=None,
 ) -> Optional[pd.DataFrame]:
     """
@@ -108,36 +110,62 @@ def run_pipeline(
         # Old behavior: fetch all tickers, no prefilter
         tickers = fetch_tickers()[:max_stocks]
         logger.info("Skipping prefilter. Analysing %d stocks", len(tickers))
+        ticker_dicts = [{"ticker": t} for t in tickers]
     else:
         # New behavior: prefilter before scraping
         ticker_info = fetch_ticker_info()
         logger.info("Found %d total tickers across all exchanges", len(ticker_info))
         
         logger.info("=== Step 1b: Pre-filtering universe ===")
-        tickers = prefilter_universe(
+        # We need prefilter_universe to return the full dicts, but it currently returns strings
+        # We'll filter the ticker_info list based on the returned tickers
+        passed_tickers = prefilter_universe(
             ticker_info,
             min_mcap=min_mcap,
             min_adv20=min_adv20,
             min_trading_days=min_trading_days,
             max_workers=workers * 2,
         )[:max_stocks]
-        logger.info("After prefilter: %d stocks to analyse", len(tickers))
+        logger.info("After prefilter: %d stocks to analyse", len(passed_tickers))
+        
+        # Map the passed string tickers back to their Wifeed dictionary info
+        passed_set = set(passed_tickers)
+        ticker_dicts = [t for t in ticker_info if t["ticker"] in passed_set]
     
-    if not tickers:
+    if not ticker_dicts:
         logger.error("No tickers passed prefilter criteria.")
         return None
 
     logger.info("=== Step 2: Scraping CafeF ===")
-    all_data, failed = ingest_all(tickers, max_workers=workers, progress_callback=progress_callback)
+    all_data, failed = ingest_all(
+        [t["ticker"] for t in ticker_dicts], 
+        max_workers=workers, 
+        progress_callback=progress_callback,
+        use_cache=use_cache,
+    )
     if not all_data:
         logger.error("No data retrieved. Check network connectivity.")
         return None
+        
+    # Merge Wifeed dictionary info (like market_cap, sector) into scraped data
+    # Wifeed sector is more reliable than Vietstock (which often times out)
+    info_map = {t["ticker"]: t for t in ticker_dicts}
+    for d in all_data:
+        tk = d["ticker"]
+        if tk in info_map:
+            wifeed = info_map[tk]
+            for k, v in wifeed.items():
+                if k == "sector" and v:
+                    # Wifeed sector always overwrites (more reliable)
+                    d[k] = v
+                elif k not in d:
+                    d[k] = v
 
     # ── Step 3: Clean ────────────────────────────────────────────
     logger.info("=== Step 3: Cleaning data ===")
     df = pd.DataFrame(all_data)
     df = clean_data(df)
-    logger.info("Data for %d / %d stocks", len(df), len(tickers))
+    logger.info("Data for %d / %d stocks", len(df), len(ticker_dicts))
 
     # ── Step 4: Features ─────────────────────────────────────────
     logger.info("=== Step 4: Computing features ===")
@@ -210,7 +238,7 @@ def run_pipeline(
     logger.info(
         "Pipeline complete in %.0fs: %d pre-filtered → %d scraped → %d after sectors → "
         "%d after fraud → %d filtered → top %d ranked",
-        elapsed, len(tickers), len(all_data), n_after_sector, n_after_fraud,
+        elapsed, len(ticker_dicts), len(all_data), n_after_sector, n_after_fraud,
         len(filtered), len(result),
     )
 
@@ -221,9 +249,11 @@ def main():
     """CLI entry point."""
     ap = argparse.ArgumentParser(description="Vietnam Quantitative Value Stock Screener")
     ap.add_argument("--max-stocks", type=int, default=9999, help="Max stocks to analyse")
-    ap.add_argument("--workers", "-w", type=int, default=10, help="Parallel workers")
+    ap.add_argument("--workers", "-w", type=int, default=30, help="Parallel workers")
     ap.add_argument("--quick", action="store_true", help="Quick mode: only 30 stocks")
     ap.add_argument("--no-db", action="store_true", help="Skip saving to Supabase")
+    ap.add_argument("--no-cache", action="store_true",
+                    help="Skip local cache, force re-scraping all data")
     ap.add_argument("--skip-prefilter", action="store_true", 
                     help="Skip liquidity/sector prefilter (slower, scans all stocks)")
     ap.add_argument("--min-mcap", type=float, default=MIN_MARKET_CAP / 1e9,
@@ -244,13 +274,14 @@ def main():
         min_trading_days=args.min_days,
         skip_prefilter=args.skip_prefilter,
         save_to_db=not args.no_db,
+        use_cache=not args.no_cache,
     )
 
     if result is not None:
         show = [
             "ticker", "combined_rank", "acquirers_multiple", "quality_score",
             "beneish_mscore", "market_cap_B", "pe", "pb",
-            "roa", "gross_profitability", "accruals", "roic", "debt_equity",
+            "ROA_5yr_avg", "ROC_5yr_avg", "FCF_assets_5yr_avg", "GM_stability", "piotroski_fscore", "debt_equity",
         ]
         avail = [c for c in show if c in result.columns]
 

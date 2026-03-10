@@ -9,7 +9,6 @@ A Python stock screener + **Streamlit dashboard** implementing Tobias Carlisle &
 - 📅 **Historical tracking** — compare screening runs over time, track rank changes
 - ⭐ **Watchlist & Portfolio** — save favourites, track buy price / P&L
 - 🔄 **Run screener from UI** — configure and run directly in the browser
-- ⏰ **Auto-scheduling** — daily/weekly cron-style automated runs
 - 💾 **Supabase persistence** — all data stored in cloud PostgreSQL
 - 🚀 **Momentum Overlay** — Avoid falling knives with 2-12 month return momentum filter
 
@@ -52,24 +51,21 @@ cp .env.example .env
 - `pandas`, `numpy` — Data processing
 - `streamlit`, `plotly` — Dashboard & charts
 - `supabase`, `python-dotenv` — Database
-- `schedule` — Auto-scheduling
 
 ## Usage
 
-### Streamlit Dashboard (recommended)
+
 
 ```bash
+python -m quant_value_vn.pipeline.run_pipeline
+
 streamlit run quant_value_vn/dashboard/streamlit_app.py
 ```
+uvicorn quant_value_vn.app.main:app --host 0.0.0.0 --port 8000
 
 Opens at `http://localhost:8501` with all features: view results, run screener, charts, watchlist, historical comparison.
 
-### CLI Screener (standalone)
 
-```bash
-# Full scan (~130 stocks, ~4-5 minutes)
-python -m quant_value_vn.pipeline.run_pipeline
-```
 
 ### Auto-Scheduler
 

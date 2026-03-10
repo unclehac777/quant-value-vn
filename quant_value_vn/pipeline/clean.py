@@ -29,6 +29,7 @@ NUMERIC_COLS = [
     "receivables", "inventory", "ppe", "current_assets",
     "current_liabilities", "depreciation_accumulated",
     "operating_cash_flow", "capex", "depreciation", "price",
+    "market_cap", "shares"
 ]
 
 
@@ -54,10 +55,14 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     """
     initial = len(df)
 
-    # Ensure numeric columns are float
+    # Ensure numeric columns are float (current year + prior year _prev variants)
     for col in NUMERIC_COLS:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+        # Also coerce the _prev version used by Piotroski/Beneish
+        prev_col = f"{col}_prev"
+        if prev_col in df.columns:
+            df[prev_col] = pd.to_numeric(df[prev_col], errors="coerce")
 
     # Drop rows without minimum requirements
     df = df.dropna(subset=["ticker", "total_assets"])

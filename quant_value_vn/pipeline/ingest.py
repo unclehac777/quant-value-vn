@@ -161,13 +161,16 @@ def fetch_tickers(exchanges: List[str] = None) -> List[str]:
 
 async def fetch_income_statement(
     client: httpx.AsyncClient, ticker: str, year: int,
-) -> Optional[Dict]:
+) -> Optional[tuple[int, Dict]]:
     """
     Scrape income statement from CafeF for one ticker/year.
 
-    Returns dict with: revenue, gross_profit, operating_profit,
-    interest_expense, pretax_profit, net_income, net_income_parent, eps,
-    selling_expense, admin_expense, cogs, tax_expense, sga
+    Returns tuple (actual_year_found, dict) with: revenue, gross_profit,
+    operating_profit, interest_expense, pretax_profit, net_income,
+    net_income_parent, eps, selling_expense, admin_expense, cogs,
+    tax_expense, sga.
+
+    Returns None if no data found for the requested year.
     """
     url = (
         f"{CAFEF_BASE_URL}/bao-cao-tai-chinh/{ticker}/IncSta/{year}"
@@ -177,17 +180,39 @@ async def fetch_income_statement(
     if not r:
         return None
 
-    tbl = _biggest_table(BeautifulSoup(r.text, "lxml"))
+    soup = BeautifulSoup(r.text, "lxml")
+    
+    # ── Find column index for requested year ──
+    # CafeF puts years in `<td class="h_t">2026</td>` inside `tblGridData`
+    year_col_idx = None
+    grid_tbl = soup.find("table", id="tblGridData")
+    if grid_tbl:
+        header_row = grid_tbl.find("tr")
+        if header_row:
+            h_cells = header_row.find_all("td")
+            for i, cell in enumerate(h_cells):
+                cell_text = cell.get_text(strip=True)
+                if str(year) in cell_text:
+                    year_col_idx = i
+                    break
+
+    # If the requested year isn't in the header, no data for that year
+    if year_col_idx is None:
+        return None
+
+    tbl = _biggest_table(soup)
     if not tbl:
         return None
 
     res: Dict = {}
     for row in tbl.find_all("tr"):
         cells = row.find_all(["td", "th"])
-        if len(cells) < 2:
+        # ensure we have enough columns
+        if len(cells) <= year_col_idx:
             continue
+            
         lbl = cells[0].get_text(strip=True).lower()
-        val = parse_vn_number(cells[1].get_text(strip=True))
+        val = parse_vn_number(cells[year_col_idx].get_text(strip=True))
 
         m = re.match(r"^(\d+)\.", lbl)
         rn = int(m.group(1)) if m else None
@@ -206,9 +231,13 @@ async def fetch_income_statement(
             res["financial_expense"] = val
         elif "chi phí lãi vay" in lbl:
             res["interest_expense"] = val
-        elif rn == 8 and "chi phí bán hàng" in lbl:
+        elif rn == 8 and ("chi phí bán hàng" in lbl or "bán hàng" in lbl):
             res["selling_expense"] = val
-        elif rn == 9 and ("chi phí quản lý" in lbl or "chi phí quản lý doanh nghiệp" in lbl):
+        elif rn == 9 and ("chi phí quản lý" in lbl or "quản lý doanh nghiệp" in lbl):
+            res["admin_expense"] = val
+        elif "chi phí bán hàng" in lbl and "selling_expense" not in res:
+            res["selling_expense"] = val
+        elif ("chi phí quản lý" in lbl or "chi phí quản lý doanh nghiệp" in lbl) and "admin_expense" not in res:
             res["admin_expense"] = val
         elif rn == 11 and "lợi nhuận thuần" in lbl:
             res["operating_profit"] = val
@@ -244,21 +273,26 @@ async def fetch_income_statement(
     if "net_income_parent" not in res and "net_income" in res:
         res["net_income_parent"] = res["net_income"]
 
-    return res if (res.get("revenue") or res.get("operating_profit")) else None
+    if not (res.get("revenue") or res.get("operating_profit")):
+        return None
+
+    return (year, res)
 
 
 # ── Balance Sheet ─────────────────────────────────────────────────────
 
 async def fetch_balance_sheet(
     client: httpx.AsyncClient, ticker: str, year: int,
-) -> Optional[Dict]:
+) -> Optional[tuple[int, Dict]]:
     """
     Scrape balance sheet from CafeF for one ticker/year.
 
-    Returns dict with: cash, short_term_investments, total_assets,
-    short_term_debt, long_term_debt, total_liabilities, equity,
-    receivables, inventory, ppe, current_assets, current_liabilities,
-    depreciation_accumulated
+    Returns tuple (actual_year_found, dict) with: cash,
+    short_term_investments, total_assets, short_term_debt, long_term_debt,
+    total_liabilities, equity, receivables, inventory, ppe,
+    current_assets, current_liabilities, depreciation_accumulated.
+
+    Returns None if no data found for the requested year.
     """
     url = (
         f"{CAFEF_BASE_URL}/bao-cao-tai-chinh/{ticker}/BSheet/{year}"
@@ -268,17 +302,34 @@ async def fetch_balance_sheet(
     if not r:
         return None
 
-    tbl = _biggest_table(BeautifulSoup(r.text, "lxml"), min_rows=30)
+    soup = BeautifulSoup(r.text, "lxml")
+    
+    year_col_idx = None
+    grid_tbl = soup.find("table", id="tblGridData")
+    if grid_tbl:
+        header_row = grid_tbl.find("tr")
+        if header_row:
+            h_cells = header_row.find_all("td")
+            for i, cell in enumerate(h_cells):
+                if str(year) in cell.get_text(strip=True):
+                    year_col_idx = i
+                    break
+
+    if year_col_idx is None:
+        return None
+
+    tbl = _biggest_table(soup, min_rows=30)
     if not tbl:
         return None
 
     res: Dict = {}
     for row in tbl.find_all("tr"):
         cells = row.find_all(["td", "th"])
-        if len(cells) < 2:
+        if len(cells) <= year_col_idx:
             continue
+            
         lbl = cells[0].get_text(strip=True).lower()
-        val = parse_vn_number(cells[1].get_text(strip=True))
+        val = parse_vn_number(cells[year_col_idx].get_text(strip=True))
 
         if "tiền và các khoản tương đương" in lbl and "cash" not in res:
             res["cash"] = val
@@ -314,17 +365,24 @@ async def fetch_balance_sheet(
         elif "lợi nhuận chưa phân phối" in lbl and "retained_earnings" not in res:
             res["retained_earnings"] = val
 
-    return res if res.get("total_assets") else None
+    if not res.get("total_assets"):
+        return None
+
+    return (year, res)
 
 
 # ── Cash Flow Statement ──────────────────────────────────────────────
 
 async def fetch_cash_flow(
     client: httpx.AsyncClient, ticker: str, year: int,
-) -> Optional[Dict]:
+) -> Optional[tuple[int, Dict]]:
     """
     Scrape cash flow statement from CafeF for one ticker/year.
-    Returns dict with: operating_cash_flow, capex, depreciation
+
+    Returns tuple (actual_year_found, dict) with: operating_cash_flow,
+    capex, depreciation.
+
+    Returns None if no data found for the requested year.
     """
     url = (
         f"{CAFEF_BASE_URL}/bao-cao-tai-chinh/{ticker}/CashFlow/{year}"
@@ -334,17 +392,34 @@ async def fetch_cash_flow(
     if not r:
         return None
 
-    tbl = _biggest_table(BeautifulSoup(r.text, "lxml"), min_rows=8)
+    soup = BeautifulSoup(r.text, "lxml")
+    
+    year_col_idx = None
+    grid_tbl = soup.find("table", id="tblGridData")
+    if grid_tbl:
+        header_row = grid_tbl.find("tr")
+        if header_row:
+            h_cells = header_row.find_all("td")
+            for i, cell in enumerate(h_cells):
+                if str(year) in cell.get_text(strip=True):
+                    year_col_idx = i
+                    break
+
+    if year_col_idx is None:
+        return None
+
+    tbl = _biggest_table(soup, min_rows=8)
     if not tbl:
         return None
 
     res: Dict = {}
     for row in tbl.find_all("tr"):
         cells = row.find_all(["td", "th"])
-        if len(cells) < 2:
+        if len(cells) <= year_col_idx:
             continue
+            
         lbl = cells[0].get_text(strip=True).lower()
-        val = parse_vn_number(cells[1].get_text(strip=True))
+        val = parse_vn_number(cells[year_col_idx].get_text(strip=True))
 
         if "lưu chuyển tiền thuần từ hoạt động kinh doanh" in lbl:
             res["operating_cash_flow"] = val
@@ -355,7 +430,453 @@ async def fetch_cash_flow(
         ):
             res["capex"] = val
 
-    return res if res else None
+    if not res:
+        return None
+
+    return (year, res)
+
+
+# ── Quarterly Data & TTM ─────────────────────────────────────────────
+
+# Income statement fields that should be SUMMED across quarters (flow metrics)
+_FLOW_FIELDS = {
+    "revenue", "gross_revenue", "cogs", "gross_profit", "financial_income",
+    "financial_expense", "interest_expense", "selling_expense", "admin_expense",
+    "operating_profit", "pretax_profit", "tax_expense", "net_income",
+    "net_income_parent", "sga",
+}
+
+# Cash flow fields to sum
+_CF_FLOW_FIELDS = {"operating_cash_flow", "capex", "depreciation"}
+
+
+def _sum_quarterly_dicts(quarters: list[Dict]) -> Dict:
+    """Sum flow-metric values across quarterly dicts (for TTM)."""
+    result: Dict = {}
+    for q in quarters:
+        for k, v in q.items():
+            if v is None:
+                continue
+            if k in _FLOW_FIELDS or k in _CF_FLOW_FIELDS:
+                result[k] = (result.get(k) or 0) + v
+            else:
+                # For non-flow fields (like EPS), take the latest
+                result[k] = v
+    # Recompute SGA from summed components
+    se = abs(result.get("selling_expense") or 0)
+    ae = abs(result.get("admin_expense") or 0)
+    if se or ae:
+        result["sga"] = se + ae
+    return result
+
+
+def _parse_income_row(lbl: str, rn: int | None) -> str | None:
+    """Map income statement row label to field name."""
+    if rn == 1 and "doanh thu bán hàng" in lbl:
+        return "gross_revenue"
+    elif rn == 3 and "doanh thu thuần" in lbl:
+        return "revenue"
+    elif rn == 4 and "giá vốn" in lbl:
+        return "cogs"
+    elif rn == 5 and "lợi nhuận gộp" in lbl:
+        return "gross_profit"
+    elif rn == 6 and "doanh thu" in lbl:
+        return "financial_income"
+    elif rn == 7 and "chi phí tài chính" in lbl:
+        return "financial_expense"
+    elif "chi phí lãi vay" in lbl:
+        return "interest_expense"
+    elif rn == 8 and ("chi phí bán hàng" in lbl or "bán hàng" in lbl):
+        return "selling_expense"
+    elif rn == 9 and ("chi phí quản lý" in lbl or "quản lý doanh nghiệp" in lbl):
+        return "admin_expense"
+    elif "chi phí bán hàng" in lbl:
+        return "selling_expense"
+    elif "chi phí quản lý" in lbl:
+        return "admin_expense"
+    elif rn == 11 and "lợi nhuận thuần" in lbl:
+        return "operating_profit"
+    elif rn == 15 and "trước thuế" in lbl:
+        return "pretax_profit"
+    elif rn == 17 and "chi phí thuế" in lbl:
+        return "tax_expense"
+    elif rn == 18 and "lợi nhuận sau thuế" in lbl:
+        return "net_income"
+    elif rn == 19 and "lợi nhuận sau thuế" in lbl and "công ty mẹ" in lbl:
+        return "net_income_parent"
+    elif rn == 21 and "lãi cơ bản" in lbl:
+        return "eps"
+    # Bank fallbacks
+    elif "thu nhập lãi thuần" in lbl:
+        return "revenue"
+    elif "tổng thu nhập hoạt động" in lbl:
+        return "revenue"
+    elif "lợi nhuận trước thuế" in lbl:
+        return "pretax_profit"
+    return None
+
+
+async def fetch_quarterly_income(
+    client: httpx.AsyncClient, ticker: str, year: int, quarter: int = 4,
+) -> Optional[tuple[int, list[Dict]]]:
+    """
+    Fetch quarterly income statement from CafeF.
+
+    Returns (year, [q1_dict, q2_dict, q3_dict, q4_dict]) for the 4 quarters
+    shown on the page. Returns None if page has no data.
+    """
+    url = (
+        f"{CAFEF_BASE_URL}/bao-cao-tai-chinh/{ticker}/IncSta/{year}"
+        f"/{quarter}/0/0/ket-qua-hoat-dong-kinh-doanh-.chn"
+    )
+    r = await _http_get(client, url)
+    if not r:
+        return None
+
+    soup = BeautifulSoup(r.text, "lxml")
+
+    # Find quarter column indices from header
+    # Headers look like: "Quý 1- 2025", "Quý 2- 2025", etc.
+    grid_tbl = soup.find("table", id="tblGridData")
+    if not grid_tbl:
+        return None
+
+    header_row = grid_tbl.find("tr")
+    if not header_row:
+        return None
+
+    h_cells = header_row.find_all("td")
+    q_col_indices = []  # list of (quarter_num, col_idx)
+    for i, cell in enumerate(h_cells):
+        text = cell.get_text(strip=True)
+        qm = re.search(r"Quý\s*(\d+)\s*-\s*(\d{4})", text)
+        if qm:
+            q_col_indices.append((int(qm.group(1)), int(qm.group(2)), i))
+
+    if len(q_col_indices) < 4:
+        return None
+
+    # Parse data table
+    tbl = _biggest_table(soup)
+    if not tbl:
+        return None
+
+    # Build a dict per quarter column
+    q_dicts: list[Dict] = [{} for _ in range(len(q_col_indices))]
+    has_data = [False] * len(q_col_indices)
+
+    for row in tbl.find_all("tr"):
+        cells = row.find_all(["td", "th"])
+        if len(cells) < 2:
+            continue
+
+        lbl = cells[0].get_text(strip=True).lower()
+        m = re.match(r"^(\d+)\.", lbl)
+        rn = int(m.group(1)) if m else None
+        field = _parse_income_row(lbl, rn)
+        if not field:
+            continue
+
+        for qi, (qn, qy, ci) in enumerate(q_col_indices):
+            if ci < len(cells):
+                val = parse_vn_number(cells[ci].get_text(strip=True))
+                if val is not None and val != 0:
+                    has_data[qi] = True
+                if field not in q_dicts[qi]:  # don't overwrite
+                    q_dicts[qi][field] = val
+
+    # Compute SGA for each quarter
+    for qd in q_dicts:
+        se = abs(qd.get("selling_expense") or 0)
+        ae = abs(qd.get("admin_expense") or 0)
+        if se or ae:
+            qd["sga"] = se + ae
+        if "net_income_parent" not in qd and "net_income" in qd:
+            qd["net_income_parent"] = qd["net_income"]
+
+    # Check we have meaningful data
+    if not any(has_data):
+        return None
+
+    # Return the actual year of the data (from the last quarter column)
+    actual_year = q_col_indices[-1][1]  # year from last column header
+    return (actual_year, q_dicts)
+
+
+async def fetch_quarterly_balance_sheet(
+    client: httpx.AsyncClient, ticker: str, year: int, quarter: int = 4,
+) -> Optional[tuple[int, Dict]]:
+    """
+    Fetch quarterly balance sheet — returns latest quarter's data.
+
+    Balance sheet is a snapshot, not summed across quarters.
+    """
+    url = (
+        f"{CAFEF_BASE_URL}/bao-cao-tai-chinh/{ticker}/BSheet/{year}"
+        f"/{quarter}/0/0/bao-cao-tai-chinh-.chn"
+    )
+    r = await _http_get(client, url)
+    if not r:
+        return None
+
+    soup = BeautifulSoup(r.text, "lxml")
+
+    # Find the latest quarter column
+    grid_tbl = soup.find("table", id="tblGridData")
+    if not grid_tbl:
+        return None
+
+    header_row = grid_tbl.find("tr")
+    if not header_row:
+        return None
+
+    h_cells = header_row.find_all("td")
+    last_q_idx = None
+    last_q_year = None
+    for i, cell in enumerate(h_cells):
+        text = cell.get_text(strip=True)
+        qm = re.search(r"Quý\s*(\d+)\s*-\s*(\d{4})", text)
+        if qm:
+            last_q_idx = i
+            last_q_year = int(qm.group(2))
+
+    if last_q_idx is None or last_q_year is None:
+        return None
+
+    tbl = _biggest_table(soup, min_rows=30)
+    if not tbl:
+        return None
+
+    res: Dict = {}
+    for row in tbl.find_all("tr"):
+        cells = row.find_all(["td", "th"])
+        if len(cells) <= last_q_idx:
+            continue
+
+        lbl = cells[0].get_text(strip=True).lower()
+        val = parse_vn_number(cells[last_q_idx].get_text(strip=True))
+
+        if "tiền và các khoản tương đương" in lbl and "cash" not in res:
+            res["cash"] = val
+        elif "đầu tư tài chính ngắn hạn" in lbl and lbl.lstrip().startswith("ii"):
+            res["short_term_investments"] = val
+        elif ("phải thu ngắn hạn" in lbl and lbl.lstrip().startswith("iii")
+              and "receivables" not in res):
+            res["receivables"] = val
+        elif "phải thu khách hàng" in lbl and "receivables" not in res:
+            res["receivables"] = val
+        elif "hàng tồn kho" in lbl and "inventory" not in res:
+            res["inventory"] = val
+        elif lbl.lstrip().startswith("a") and "tài sản ngắn hạn" in lbl:
+            res["current_assets"] = val
+        elif "hữu hình" in lbl and "nguyên giá" not in lbl and "ppe" not in res:
+            res["ppe"] = val
+        elif ("hao mòn lũy kế" in lbl or "khấu hao lũy kế" in lbl) and "depreciation_accumulated" not in res:
+            res["depreciation_accumulated"] = val
+        elif "vay và nợ" in lbl and "ngắn hạn" in lbl:
+            res["short_term_debt"] = val
+        elif "vay và nợ" in lbl and "dài hạn" in lbl:
+            res["long_term_debt"] = val
+        elif "nợ ngắn hạn" in lbl and "current_liabilities" not in res:
+            res["current_liabilities"] = val
+        elif "tổng cộng tài sản" in lbl:
+            res["total_assets"] = val
+        elif lbl.lstrip().startswith("c") and "nợ phải trả" in lbl:
+            res["total_liabilities"] = val
+        elif lbl.lstrip().startswith("d") and "vốn chủ sở hữu" in lbl:
+            res["equity"] = val
+        elif "lợi nhuận sau thuế chưa phân phối" in lbl and "retained_earnings" not in res:
+            res["retained_earnings"] = val
+        elif "lợi nhuận chưa phân phối" in lbl and "retained_earnings" not in res:
+            res["retained_earnings"] = val
+
+    if not res.get("total_assets"):
+        return None
+
+    return (last_q_year, res)
+
+
+async def fetch_quarterly_cash_flow(
+    client: httpx.AsyncClient, ticker: str, year: int, quarter: int = 4,
+) -> Optional[tuple[int, list[Dict]]]:
+    """
+    Fetch quarterly cash flow — returns all 4 quarters for TTM summing.
+    """
+    url = (
+        f"{CAFEF_BASE_URL}/bao-cao-tai-chinh/{ticker}/CashFlow/{year}"
+        f"/{quarter}/0/0/bao-cao-tai-chinh-.chn"
+    )
+    r = await _http_get(client, url)
+    if not r:
+        return None
+
+    soup = BeautifulSoup(r.text, "lxml")
+
+    grid_tbl = soup.find("table", id="tblGridData")
+    if not grid_tbl:
+        return None
+
+    header_row = grid_tbl.find("tr")
+    if not header_row:
+        return None
+
+    h_cells = header_row.find_all("td")
+    q_col_indices = []
+    for i, cell in enumerate(h_cells):
+        text = cell.get_text(strip=True)
+        qm = re.search(r"Quý\s*(\d+)\s*-\s*(\d{4})", text)
+        if qm:
+            q_col_indices.append((int(qm.group(1)), int(qm.group(2)), i))
+
+    if len(q_col_indices) < 4:
+        return None
+
+    tbl = _biggest_table(soup, min_rows=8)
+    if not tbl:
+        return None
+
+    q_dicts: list[Dict] = [{} for _ in range(len(q_col_indices))]
+    has_data = [False] * len(q_col_indices)
+
+    for row in tbl.find_all("tr"):
+        cells = row.find_all(["td", "th"])
+        if len(cells) < 2:
+            continue
+
+        lbl = cells[0].get_text(strip=True).lower()
+        field = None
+        if "lưu chuyển tiền thuần từ hoạt động kinh doanh" in lbl:
+            field = "operating_cash_flow"
+        elif "khấu hao" in lbl:
+            field = "depreciation"
+        elif ("mua sắm" in lbl or "xây dựng" in lbl) and (
+            "tài sản cố định" in lbl or "tscd" in lbl.replace(" ", "")
+        ):
+            field = "capex"
+
+        if not field:
+            continue
+
+        for qi, (qn, qy, ci) in enumerate(q_col_indices):
+            if ci < len(cells):
+                val = parse_vn_number(cells[ci].get_text(strip=True))
+                if val is not None and val != 0:
+                    has_data[qi] = True
+                if field not in q_dicts[qi]:
+                    q_dicts[qi][field] = val
+
+    if not any(has_data):
+        return None
+
+    actual_year = q_col_indices[-1][1]
+    return (actual_year, q_dicts)
+
+
+async def fetch_ttm_data(
+    client: httpx.AsyncClient, ticker: str,
+) -> Optional[tuple[Dict, int]]:
+    """
+    Fetch TTM (Trailing Twelve Months) data using quarterly reports.
+
+    Returns (data_dict, data_year) or None if quarterly data unavailable.
+    Data dict includes both current TTM and _prev TTM fields.
+    """
+    now = datetime.now()
+    yr = now.year
+    month = now.month
+
+    # Determine the latest quarter likely to have been REPORTED
+    # Vietnamese companies typically report ~2 months after quarter end:
+    # Q4 (Dec) → reported by Feb-Mar, Q1 (Mar) → by May, etc.
+    # So in March 2026, Q4/2025 data should be available.
+    # Build search order: most recent likely quarter first
+    search_quarters = []
+    
+    def is_likely_reported(q_year: int, q_num: int) -> bool:
+        q_end_month = q_num * 3
+        months_since = (yr - q_year) * 12 + month - q_end_month
+        return months_since >= 2
+
+    # Current year (2026)
+    for qnum in range(4, 0, -1):
+        if is_likely_reported(yr, qnum):
+            search_quarters.append((yr, qnum))
+            
+    # Last year (2025)
+    for qnum in range(4, 0, -1):
+        if is_likely_reported(yr - 1, qnum):
+            search_quarters.append((yr - 1, qnum))
+            
+    # Year before (2024)
+    for qnum in range(4, 0, -1):
+        search_quarters.append((yr - 2, qnum))
+
+    if not search_quarters:
+        # Early in year, add prior year quarters
+        for qnum in range(4, 0, -1):
+            search_quarters.append((yr - 1, qnum))
+
+    inc_quarters = None
+    inc_year = None
+    for try_year, try_q in search_quarters:
+        result = await fetch_quarterly_income(client, ticker, try_year, try_q)
+        if result:
+            inc_year, inc_quarters = result
+            break
+
+    if not inc_quarters or inc_year is None:
+        return None
+
+    # TTM = sum of all 4 quarters from the page
+    d: Dict = {"ticker": ticker}
+    ttm_inc = _sum_quarterly_dicts(inc_quarters)
+    if not (ttm_inc.get("revenue") or ttm_inc.get("operating_profit")):
+        return None
+    d.update(ttm_inc)
+
+    # Balance sheet — latest quarter snapshot (use same search order)
+    for try_year, try_q in search_quarters:
+        result = await fetch_quarterly_balance_sheet(client, ticker, try_year, try_q)
+        if result:
+            _, bs = result
+            d.update(bs)
+            break
+
+    if not d.get("total_assets"):
+        return None
+
+    # Cash flow — TTM sum
+    for try_year, try_q in search_quarters:
+        result = await fetch_quarterly_cash_flow(client, ticker, try_year, try_q)
+        if result:
+            _, cf_quarters = result
+            ttm_cf = _sum_quarterly_dicts(cf_quarters)
+            d.update(ttm_cf)
+            break
+
+    # _prev TTM: fetch the year before the TTM year
+    prev_year = inc_year - 1 if inc_year is not None else yr - 1
+    for try_q in [4, 3, 2, 1]:
+        result = await fetch_quarterly_income(client, ticker, prev_year, try_q)
+        if result:
+            _, prev_quarters = result
+            prev_ttm = _sum_quarterly_dicts(prev_quarters)
+            for k, v in prev_ttm.items():
+                d[f"{k}_prev"] = v
+            break
+
+    # _prev balance sheet
+    for try_q in [4, 3, 2, 1]:
+        result = await fetch_quarterly_balance_sheet(client, ticker, prev_year, try_q)
+        if result:
+            _, bs_prev = result
+            for k, v in bs_prev.items():
+                d[f"{k}_prev"] = v
+            break
+
+    d["data_source"] = "TTM"
+    d["data_year"] = inc_year
+    return (d, inc_year)
 
 
 # ── Stock Price ───────────────────────────────────────────────────────
@@ -481,7 +1002,8 @@ async def fetch_liquidity(
             return None
         
         # ADV20 = average of most recent 20 trading days
-        adv20 = sum(daily_values[:20]) / min(20, len(daily_values[:20]))
+        recent_values = daily_values[:20]
+        adv20 = sum(recent_values) / min(20, len(recent_values))
         avg_volume = sum(daily_volumes) / len(daily_volumes) if daily_volumes else 0
         
         return {
@@ -545,7 +1067,10 @@ async def _fetch_prefilter_data(
     total = len(tickers)
     completed = 0
     
-    async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True) as client:
+    async with httpx.AsyncClient(
+            headers=_HEADERS, follow_redirects=True,
+            limits=httpx.Limits(max_connections=200, max_keepalive_connections=100),
+    ) as client:
         tasks = []
         for tk in tickers:
             async def _fetch(t=tk):
@@ -657,7 +1182,10 @@ def prefilter_universe(
             continue
         
         # Sector filter
-        sector = data.get("sector") or ""
+        sector = data.get("sector", "")
+        if type(sector) is not str:
+            sector = ""
+            
         if sector:
             is_excluded_sector = (
                 sector in excluded_sectors
@@ -668,8 +1196,8 @@ def prefilter_universe(
                 continue
         
         # Liquidity filter
-        adv20 = data.get("adv20", 0)
-        trading_days = data.get("trading_days", 0)
+        adv20 = float(data.get("adv20", 0))
+        trading_days = int(data.get("trading_days", 0))
         
         if adv20 < min_adv20 or trading_days < min_trading_days:
             excluded_by_liquidity += 1
@@ -704,73 +1232,132 @@ async def fetch_fundamental_data(
     client: httpx.AsyncClient, ticker: str,
 ) -> Optional[Dict]:
     """
-    Fetch 2 years of financial data for one stock (async).
-
-    Needed for Beneish M-Score (requires YoY comparisons).
-    Returns dict with current year fields + _prev suffix for prior year.
-    Returns None if minimum required data is missing.
+    Fetch both Annual (latest completed year) and TTM (trailing 12 months) data.
+    
+    Annual data is used for long-term Quality metrics (ROA, GP/TA, Accruals).
+    TTM data is used for Valuation ratios (Acquirer's Multiple, P/E) to be as fresh as possible.
+    
+    Returns unified dict with:
+    - Annual fields: revenue, ebit, total_assets, etc.
+    - TTM fields: revenue_ttm, ebit_ttm, etc.
     """
-    d: Dict = {"ticker": ticker}
-    yr = datetime.now().year
+    now = datetime.now()
+    yr = now.year
 
-    # Current year income & balance
-    inc = await fetch_income_statement(client, ticker, yr - 1)
-    if not inc:
-        inc = await fetch_income_statement(client, ticker, yr - 2)
-    if not inc:
+    # 1. First, always fetch ANNUAL data (Quality metrics need this)
+    ann_dict: Dict = {"ticker": ticker}
+    
+    # ── Fetch 5 Years of Historical Data ──
+    # Income statement - search latest available annual
+    inc_year = None
+    for try_yr in [yr, yr - 1, yr - 2]:
+        result = await fetch_income_statement(client, ticker, try_yr)
+        if result:
+            inc_year, inc_data = result
+            ann_dict.update(inc_data)
+            break
+            
+    if inc_year is None:
         return None
-    d.update(inc)
 
-    bs = await fetch_balance_sheet(client, ticker, yr - 1)
-    if not bs:
-        bs = await fetch_balance_sheet(client, ticker, yr - 2)
-    if not bs:
-        return None
-    d.update(bs)
+    # Balance sheet - match income year
+    bs_result = await fetch_balance_sheet(client, ticker, inc_year)
+    if bs_result:
+        _, bs_data = bs_result
+        ann_dict.update(bs_data)
+    else:
+        return None  # BS is critical
 
-    # Cash flow (current year)
-    cf = await fetch_cash_flow(client, ticker, yr - 1)
-    if not cf:
-        cf = await fetch_cash_flow(client, ticker, yr - 2)
-    if cf:
-        d.update(cf)
+    # Cash flow - match income year
+    cf_result = await fetch_cash_flow(client, ticker, inc_year)
+    if cf_result:
+        _, cf_data = cf_result
+        ann_dict.update(cf_data)
 
-    # Prior year (for Beneish M-Score YoY ratios)
-    inc_prev = await fetch_income_statement(client, ticker, yr - 2)
-    if not inc_prev:
-        inc_prev = await fetch_income_statement(client, ticker, yr - 3)
-    if inc_prev:
-        for k, v in inc_prev.items():
-            d[f"{k}_prev"] = v
+    # Fetch prior 4 years for historical averages (y1 to y4)
+    for offset in range(1, 5):
+        hist_yr = inc_year - offset
+        suffix = f"_y{offset}"
+        
+        # We need `_prev` to equal `_y1` for Piotroski F-Score compatibility
+        # without breaking existing downstream logic.
+        
+        hist_inc = await fetch_income_statement(client, ticker, hist_yr)
+        if hist_inc:
+            for k, v in hist_inc[1].items():
+                ann_dict[f"{k}{suffix}"] = v
+                if offset == 1:
+                    ann_dict[f"{k}_prev"] = v
+                
+        hist_bs = await fetch_balance_sheet(client, ticker, hist_yr)
+        if hist_bs:
+            for k, v in hist_bs[1].items():
+                ann_dict[f"{k}{suffix}"] = v
+                if offset == 1:
+                    ann_dict[f"{k}_prev"] = v
+                    
+        hist_cf = await fetch_cash_flow(client, ticker, hist_yr)
+        if hist_cf:
+            for k, v in hist_cf[1].items():
+                ann_dict[f"{k}{suffix}"] = v
+                if offset == 1:
+                    ann_dict[f"{k}_prev"] = v
 
-    bs_prev = await fetch_balance_sheet(client, ticker, yr - 2)
-    if not bs_prev:
-        bs_prev = await fetch_balance_sheet(client, ticker, yr - 3)
-    if bs_prev:
-        for k, v in bs_prev.items():
-            d[f"{k}_prev"] = v
+    # Store Annual provenance
+    ann_dict["data_source_annual"] = "Annual"
+    ann_dict["data_year_annual"] = inc_year
 
-    # Latest stock price
+    # 2. Attempt to fetch TTM data for freshest Valuation metrics
+    ttm_result = await fetch_ttm_data(client, ticker)
+    if ttm_result:
+        ttm_data, ttm_year = ttm_result
+        
+        # Merge TTM into the main dict with _ttm suffix
+        for k, v in ttm_data.items():
+            if k in ("ticker", "data_source", "data_year"):
+                pass  # Ignore original provenance names
+            elif k == "data_year_ttm":
+                ann_dict["data_year_ttm"] = v
+            else:
+                ann_dict[f"{k}_ttm"] = v
+                
+        ann_dict["data_source_ttm"] = "TTM"
+    else:
+        # 3. Fallback: If no TTM available, clone Annual fields into TTM keys
+        ann_dict["data_source_ttm"] = "Annual (Fallback)"
+        ann_dict["data_year_ttm"] = inc_year
+        
+        # Clone all numeric fields
+        for k, v in list(ann_dict.items()):
+            if isinstance(v, (int, float)) and not k.endswith("_prev"):
+                ann_dict[f"{k}_ttm"] = v
+                
+        # Clone _prev fields
+        for k, v in list(ann_dict.items()):
+            if k.endswith("_prev"):
+                base_key = k[:-5]
+                ann_dict[f"{base_key}_ttm_prev"] = v
+
+    # 4. Price & momentum (common to both TTM and annual)
     price = await fetch_price(client, ticker)
     if price:
-        d["price"] = price
+        ann_dict["price"] = price
 
-    # 12-month price history for momentum (2-12 month signal)
     price_hist = await fetch_price_history(client, ticker, days=280)
     if price_hist:
         from quant_value_vn.pipeline.momentum import compute_momentum_from_prices
         mom = compute_momentum_from_prices(price_hist)
         if mom:
-            d["mom_2_12"] = mom.get("mom_2_12")
-            d["mom_12"] = mom.get("mom_12")
-            d["mom_1"] = mom.get("mom_1")
+            ann_dict["mom_2_12"] = mom.get("mom_2_12")
+            ann_dict["mom_12"] = mom.get("mom_12")
+            ann_dict["mom_1"] = mom.get("mom_1")
 
     # Sector (from Vietstock profile)
     sector = await fetch_sector(client, ticker)
     if sector:
-        d["sector"] = sector
+        ann_dict["sector"] = sector
 
-    return d
+    return ann_dict
 
 
 # ── Async Parallel Ingestion ─────────────────────────────────────────
@@ -784,6 +1371,10 @@ async def _ingest_one(
     async with sem:
         try:
             data = await fetch_fundamental_data(client, ticker)
+            # Save to cache immediately (provides resumability)
+            if data:
+                from quant_value_vn.pipeline.cache import set_cached
+                set_cached(ticker, data)
             return ticker, data, None
         except Exception as exc:
             return ticker, None, exc
@@ -793,19 +1384,51 @@ async def _ingest_all_async(
     tickers: List[str],
     max_workers: int = SCRAPER_WORKERS,
     progress_callback=None,
+    use_cache: bool = True,
 ) -> tuple[List[Dict], List[str]]:
     """
     Core async ingestion — fetch all tickers concurrently.
     Concurrency is controlled by asyncio.Semaphore(max_workers).
+
+    When use_cache is True, checks local cache first and only scrapes
+    tickers with stale or missing cache entries. Provides resumability.
     """
-    sem = asyncio.Semaphore(max_workers)
+    from quant_value_vn.pipeline.cache import get_cached
+
     all_data: List[Dict] = []
     failed: List[str] = []
-    total = len(tickers)
+    to_scrape: List[str] = []
+    cached_count = 0
+
+    # Check cache first
+    if use_cache:
+        for tk in tickers:
+            cached = get_cached(tk)
+            if cached:
+                all_data.append(cached)
+                cached_count += 1
+            else:
+                to_scrape.append(tk)
+        if cached_count:
+            logger.info("Cache hit: %d/%d tickers (scraping %d)",
+                        cached_count, len(tickers), len(to_scrape))
+    else:
+        to_scrape = list(tickers)
+
+    if not to_scrape:
+        logger.info("All %d tickers served from cache", cached_count)
+        return all_data, failed
+
+    # Scrape remaining tickers
+    sem = asyncio.Semaphore(max_workers)
+    total = len(to_scrape)
     completed = 0
 
-    async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True) as client:
-        tasks = [_ingest_one(sem, client, tk) for tk in tickers]
+    async with httpx.AsyncClient(
+            headers=_HEADERS, follow_redirects=True,
+            limits=httpx.Limits(max_connections=200, max_keepalive_connections=100),
+    ) as client:
+        tasks = [_ingest_one(sem, client, tk) for tk in to_scrape]
         for coro in asyncio.as_completed(tasks):
             tk, data, err = await coro
             completed += 1
@@ -816,9 +1439,10 @@ async def _ingest_all_async(
             if completed % 50 == 0:
                 logger.info("[%d/%d] %d ok", completed, total, len(all_data))
             if progress_callback:
-                progress_callback(completed, total, len(all_data))
+                progress_callback(completed + cached_count, len(tickers), len(all_data))
 
-    logger.info("Ingestion done: %d fetched, %d skipped", len(all_data), len(failed))
+    logger.info("Ingestion done: %d cached + %d scraped, %d failed",
+                cached_count, len(all_data) - cached_count, len(failed))
     return all_data, failed
 
 
@@ -826,12 +1450,17 @@ def ingest_all(
     tickers: List[str],
     max_workers: int = SCRAPER_WORKERS,
     progress_callback=None,
+    use_cache: bool = True,
 ) -> tuple[List[Dict], List[str]]:
     """
     Fetch fundamental data for all tickers via async httpx.
 
     Sync wrapper around the async implementation — safe to call from
     synchronous code (run_pipeline, CLI, Streamlit).
+
+    When use_cache is True, serves fresh data from local cache and only
+    scrapes stale/missing tickers. Set to False (--no-cache) to force
+    re-scraping everything.
 
     Returns (successful_data_list, failed_tickers_list).
     Optional progress_callback(completed, total, ok_count) for UI updates.
@@ -848,10 +1477,10 @@ def ingest_all(
         with concurrent.futures.ThreadPoolExecutor(1) as pool:
             result = pool.submit(
                 asyncio.run,
-                _ingest_all_async(tickers, max_workers, progress_callback),
+                _ingest_all_async(tickers, max_workers, progress_callback, use_cache),
             ).result()
         return result
     else:
         return asyncio.run(
-            _ingest_all_async(tickers, max_workers, progress_callback)
+            _ingest_all_async(tickers, max_workers, progress_callback, use_cache)
         )
