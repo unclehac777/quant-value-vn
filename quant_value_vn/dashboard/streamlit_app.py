@@ -317,12 +317,20 @@ elif page == "📊 Screening Results":
             st.download_button("📥 Download CSV", csv, f"screener_{run_id}.csv", "text/csv")
 
             st.subheader("⭐ Quick Add to Watchlist")
-            tickers = filtered["ticker"].tolist()
-            pick = st.multiselect("Select tickers", tickers)
-            if st.button("Add to Watchlist") and pick:
-                for tk in pick:
-                    api_post("/watchlist", {"ticker": tk})
-                st.success(f"Added {len(pick)} ticker(s)")
+            
+            wl_df = get_watchlist_df()
+            existing_wl = wl_df["ticker"].tolist() if not wl_df.empty else []
+            tickers = [t for t in filtered["ticker"].tolist() if t not in existing_wl]
+            
+            if not tickers:
+                st.info("All stocks in this result set are already in your watchlist.")
+            else:
+                pick = st.multiselect("Select tickers", tickers)
+                if st.button("Add to Watchlist") and pick:
+                    for tk in pick:
+                        api_post("/watchlist", {"ticker": tk})
+                    st.success(f"Added {len(pick)} ticker(s)")
+                    st.rerun()
 
 
 # ====================================================================
