@@ -62,7 +62,6 @@ st.markdown("""
 
 # ── API helpers ──────────────────────────────────────────────────────
 
-@st.cache_data(ttl=30)
 def api_get(path: str) -> dict:
     """GET request to FastAPI backend. Returns parsed JSON."""
     try:
