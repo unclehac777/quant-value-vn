@@ -81,62 +81,64 @@ The `scheduler.py` script is not yet implemented. Consider using GitHub Actions 
 | Column | Description |
 |--------|-------------|
 | `ticker` | Stock symbol |
-| `combined_rank` | Final ranking (1 = best) |
+| `combined_rank` | Final ranking (1 = best) within the cheapest 40% subset |
 | `acquirers_multiple` | EV / EBIT (lower = cheaper) |
 | `quality_score` | Normalised quality 0-100 (higher = better) |
+| `piotroski_fscore` | Financial strength signal (0-9) |
 | `market_cap_B` | Market cap in billion VND |
 | `pe` | Price / Earnings |
 | `pb` | Price / Book |
-| `roa` | Return on Assets |
-| `roic` | Return on Invested Capital |
-| `fcf_yield` | Free Cash Flow Yield |
-| `debt_equity` | Total Debt / Equity |
+| `ROA_5yr_avg` | 5-Year Average Return on Assets |
+| `ROC_5yr_avg` | 5-Year Average Return on Capital |
+| `FCF_assets_5yr_avg` | 5-Year Avg Free Cash Flow to Assets |
+| `GM_stability` | 5-Year Gross Margin Standard Deviation (Lower = better) |
 
-## Methodology
+## Methodology (Tobias Carlisle & Wesley Gray specs)
 
 ### 1. Enterprise Value (EV)
 ```
-EV = Market Cap + Total Debt − Cash & Short-term Investments
+EV = Market Cap + Total Debt + Minority Interest + Preferred Stock − Cash & Equivalents
 ```
 - Market Cap = Latest Price × Shares Outstanding
-- Shares Outstanding = Net Income (parent) / EPS
+- Strictly guards against negative EV values.
 
-### 2. Acquirer's Multiple (Value)
+### 2. The Value Screen (Acquirer's Multiple)
 ```
 AM = EV / EBIT
 ```
-- EBIT = Operating Profit + Interest Expense (VN accounting deducts interest from operating profit)
-- Lower = cheaper relative to earnings power
+- **The Cutoff:** The screener evaluates all investable stocks and strictly slices the universe down to the **cheapest 40%** by Acquirer's Multiple. All remaining stocks are discarded regardless of quality.
 
-### 3. Quality Score
-```
-Quality = 0.30 × ROA(norm) + 0.40 × ROIC(norm) + 0.30 × FCF Yield(norm)
-```
-- Each component normalised to 0-100
-- FCF ≈ EBIT × 0.7 (after-tax / maintenance capex proxy)
+### 3. Quality & Fraud Screens
+Applied *only* to the cheapest 40% subset to rank the final portfolio:
+- **Franchise Power (Quality):** Ranked by `ROA_5yr_avg`, `ROC_5yr_avg`, `FCF_assets_5yr_avg`, and `GM_stability`.
+- **Financial Strength (Signals):** Ranked by the **Piotroski F-Score** (must be ≥ 5).
+- **Fraud Detection:** Companies with a **Beneish M-Score > -1.78** are eliminated.
+- **Distress Risk:** Companies with an **Altman Z-Score < 1.5** are eliminated.
 
 ### 4. Combined Ranking
 ```
-Combined Rank = rank(Value Rank + Quality Rank)
+Combined Rank = rank(Quality Rank + Signal Rank)
 ```
-- Equal weight to value and quality
-- Rank 1 = best combination
+- The cheapest 40% bucket is re-sorted internally by the intersection of their 5-year Quality and F-Score Signal rankings. Rank 1 = Best combination of cheapness, quality, and safety.
 
 ### 5. Momentum Overlay
 ```
 Momentum = 2-12 month return
 ```
-- Excludes stocks with negative momentum to avoid falling knives
+- Excludes stocks with negative momentum to avoid catching falling knives.
 
 ## Filters
 
 | Filter | Threshold | Purpose |
 |--------|-----------|---------|
 | EBIT | > 0 | Exclude unprofitable companies |
-| Acquirer's Multiple | ≤ 20 | Exclude overvalued stocks |
-| Market Cap | ≥ 500B VND | Exclude micro-caps / illiquid |
-| Enterprise Value | > 0 | Sanity check |
-| Debt / Equity | < 3 | Exclude overleveraged companies |
+| Average Daily Volume | ≥ 5B VND | Strict Vietnam Liquidity check |
+| Trading Frequency | ≥ 50/60 days | Exclude suspended/illiquid stocks |
+| Market Cap | ≥ 500B VND | Exclude micro-caps |
+| Sector | Excluded | Removes Financials, Real Estate, Utilities |
+| Beneish M-Score | ≤ -1.78 | Eliminate earnings manipulation |
+| Altman Z-Score | > 1.5 | Eliminate bankruptcy risk |
+| Piotroski F-Score| ≥ 5 | Ensure baseline financial health |
 
 ## Interpretation Guide
 
