@@ -114,9 +114,15 @@ def get_runs_df() -> pd.DataFrame:
 
 
 def get_watchlist_df() -> pd.DataFrame:
-    data = api_get("/watchlist")
-    records = data.get("data", [])
-    return pd.DataFrame(records) if records else pd.DataFrame()
+    """Fetch watchlist directly without caching so UI updates instantly."""
+    try:
+        r = httpx.get(f"{API_BASE}/watchlist", timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        records = data.get("data", [])
+        return pd.DataFrame(records) if records else pd.DataFrame()
+    except httpx.HTTPError:
+        return pd.DataFrame()
 
 
 def get_stock_detail(ticker: str) -> dict:
