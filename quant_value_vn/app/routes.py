@@ -26,6 +26,12 @@ class WatchlistAdd(BaseModel):
     shares: Optional[float] = None
 
 
+class WatchlistUpdate(BaseModel):
+    notes: Optional[str] = None
+    buy_price: Optional[float] = None
+    shares: Optional[float] = None
+
+
 class RunConfig(BaseModel):
     max_stocks: int = 9999
     workers: int = 10
@@ -112,6 +118,13 @@ def remove_watchlist_item(ticker: str):
     """Remove a ticker from the watchlist."""
     svc.remove_from_watchlist(ticker)
     return {"message": f"Removed {ticker}"}
+
+
+@router.put("/watchlist/{ticker}")
+def update_watchlist_item(ticker: str, item: WatchlistUpdate):
+    """Update a watchlist item's notes, buy price, or shares."""
+    svc.update_watchlist_item(ticker, item.notes, item.buy_price, item.shares)
+    return {"message": f"Updated {ticker}"}
 
 
 # ── Run Pipeline ─────────────────────────────────────────────────────
