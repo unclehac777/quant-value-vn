@@ -24,6 +24,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 import httpx
+import numpy as np
 import pandas as pd
 from bs4 import BeautifulSoup
 
@@ -69,6 +70,17 @@ def parse_vn_number(text: str) -> Optional[float]:
         return None
 
 
+def parse_us_number(text: str) -> Optional[float]:
+    """Parse US formatted number (e.g. '1,234,567.89'). Used for JSON APIs."""
+    if not text or not text.strip():
+        return None
+    t = text.strip().replace(",", "")
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
+
 async def _http_get(
     client: httpx.AsyncClient, url: str, timeout: int = SCRAPER_TIMEOUT,
 ) -> Optional[httpx.Response]:
@@ -76,7 +88,7 @@ async def _http_get(
     await asyncio.sleep(SCRAPER_DELAY)
     for _ in range(2):
         try:
-            r = await client.get(url, timeout=timeout)
+            r = await client.get(url, timeout=timeout, follow_redirects=True)
             if r.status_code == 200:
                 return r
         except httpx.HTTPError:
@@ -905,6 +917,40 @@ async def fetch_price(client: httpx.AsyncClient, ticker: str) -> Optional[float]
     return None
 
 
+async def fetch_cafef_indices(client: httpx.AsyncClient, ticker: str) -> Dict:
+    """
+    Fetch official financial indices from CafeF (Market Cap, Shares Outstanding).
+    
+    Source: https://cafef.vn/du-lieu/Ajax/PageNew/ChiSoTaiChinh.ashx?Symbol=<TICKER>
+    
+    Returns dict: {market_cap_cafef, shares_cafef}
+    Market Cap is in Billion VND, converted to VND.
+    """
+    url = f"https://cafef.vn/du-lieu/Ajax/PageNew/ChiSoTaiChinh.ashx?Symbol={ticker}"
+    res = {"market_cap_cafef": np.nan, "shares_cafef": np.nan}
+    
+    r = await _http_get(client, url, timeout=10)
+    if not r:
+        return res
+        
+    try:
+        data = r.json().get("Data", [])
+        for item in data:
+            code = item.get("Code")
+            val = parse_us_number(item.get("Value"))
+            if val is None:
+                continue
+            
+            if code == "VonHoaThiTruong":
+                res["market_cap_cafef"] = val * 1e9  # CafeF returns billions
+            elif code == "KlcpLuuHanh":
+                res["shares_cafef"] = val
+    except Exception:
+        pass
+        
+    return res
+
+
 async def fetch_price_history(
     client: httpx.AsyncClient, ticker: str, days: int = 300,
 ) -> Optional[List[Dict]]:
@@ -1342,6 +1388,10 @@ async def fetch_fundamental_data(
     price = await fetch_price(client, ticker)
     if price:
         ann_dict["price"] = price
+
+    # 5. Fetch official CafeF indices (Market Cap, Shares)
+    indices = await fetch_cafef_indices(client, ticker)
+    ann_dict.update(indices)
 
     price_hist = await fetch_price_history(client, ticker, days=280)
     if price_hist:

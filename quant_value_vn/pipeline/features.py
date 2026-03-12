@@ -41,10 +41,6 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     gp_ann = df.get("gross_profit", pd.Series(dtype=float))
     ocf_ann = df.get("operating_cash_flow", pd.Series(dtype=float))
     
-    op_ann = df.get("operating_profit", pd.Series(dtype=float))
-    ie_ann = df.get("interest_expense", pd.Series(dtype=float)).fillna(0).clip(lower=0)
-    ebit_ann = np.where(op_ann.notna(), op_ann + ie_ann, np.nan)
-
     # ── 2. Base Metrics (TTM) ──
     ni_ttm = df.get("net_income_parent_ttm", pd.Series(np.nan, index=df.index)).fillna(
         df.get("net_income_ttm", ni_ann)
@@ -53,40 +49,62 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     gp_ttm = df.get("gross_profit_ttm", gp_ann)
     ocf_ttm = df.get("operating_cash_flow_ttm", ocf_ann)
     
-    op_ttm = df.get("operating_profit_ttm", op_ann)
-    ie_ttm = df.get("interest_expense_ttm", ie_ann).fillna(0).clip(lower=0)
-    ebit_ttm = np.where(op_ttm.notna(), op_ttm + ie_ttm, np.nan)
-    
     # Expose TTM metrics as the primary flow columns so the UI shows the freshest data
     df["revenue"] = rev_ttm
     df["net_income"] = ni_ttm
     df["operating_cash_flow"] = ocf_ttm
+    
+    # ── Strict EBIT (Operating Earnings) ──
+    # EBIT = Revenue - COGS - SGA - Depreciation - Amortization
+    def _calc_ebit(rev, gp, sga, dep, am):
+        cogs = rev - gp
+        # Fill missing with 0 for expenses
+        sga = sga.fillna(0)
+        dep = dep.fillna(0)
+        am = am.fillna(0)
+        return rev - cogs - sga - dep - am
+
+    sga_ann = df.get("sga", pd.Series(0.0, index=df.index)).fillna(
+        df.get("selling_expense", pd.Series(0.0, index=df.index)).fillna(0) + 
+        df.get("admin_expense", pd.Series(0.0, index=df.index)).fillna(0)
+    )
+    dep_ann = abs(df.get("depreciation", pd.Series(0.0, index=df.index))).fillna(0)
+    am_ann = abs(df.get("amortization", pd.Series(0.0, index=df.index))).fillna(0)
+    
+    ebit_ann = _calc_ebit(rev_ann, gp_ann, sga_ann, dep_ann, am_ann)
+    
+    sga_ttm = df.get("sga_ttm", sga_ann)
+    dep_ttm = abs(df.get("depreciation_ttm", dep_ann)).fillna(0)
+    am_ttm = abs(df.get("amortization_ttm", am_ann)).fillna(0)
+    
+    ebit_ttm = _calc_ebit(rev_ttm, gp_ttm, sga_ttm, dep_ttm, am_ttm)
+    
     df["ebit"] = ebit_ttm
 
     # ── Shares outstanding ──
     eps_ttm = df.get("eps_ttm", df.get("eps", pd.Series(dtype=float)))
     df["eps"] = eps_ttm
-    df["shares"] = np.where(
-        (eps_ttm > 0) & (ni_ttm > 0),
-        ni_ttm / eps_ttm,
-        np.nan,
+    
+    # Prioritize CafeF shares, fallback to NI/EPS calculation
+    computed_shares = pd.Series(
+        np.where((eps_ttm > 0) & (ni_ttm > 0), ni_ttm / eps_ttm, np.nan),
+        index=df.index
     )
+    df["shares"] = df.get("shares_cafef", pd.Series(np.nan, index=df.index)).fillna(computed_shares)
 
     # ── Market capitalisation ──
     price = df.get("price", pd.Series(dtype=float))
-    existing_mc = df.get("market_cap", pd.Series(0.0, index=df.index))
     
-    computed_mc = np.where(
-        df["shares"].notna() & price.notna(),
-        price * df["shares"],
-        np.nan,
+    # Prioritize CafeF Market Cap (already converted to VND in ingest.py if available)
+    mc_cafef = df.get("market_cap_cafef", pd.Series(np.nan, index=df.index))
+    
+    # Fallback to Price * Shares
+    computed_mc = pd.Series(
+        np.where(df["shares"].notna() & price.notna(), price * df["shares"], np.nan),
+        index=df.index
     )
     
-    df["market_cap"] = np.where(
-        (existing_mc > 0) & existing_mc.notna(),
-        existing_mc,
-        computed_mc
-    )
+    df["market_cap"] = mc_cafef.fillna(computed_mc)
 
     # ── Debt & Cash aggregates ──
     df["total_debt"] = (
@@ -143,6 +161,11 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
         (ni_ann - ocf_ann) / ta,
         np.nan,
     )
+
+    # ── EBITDA (Use TTM) ──
+    # EBITDA = EBIT + Depreciation & Amortization
+    dep_ttm = abs(df.get("depreciation_ttm", df.get("depreciation", pd.Series(0.0, index=df.index)))).fillna(0)
+    df["ebitda"] = ebit_ttm + dep_ttm
 
 
     # ── Quality Metrics (5-Year Averages) ──
@@ -253,17 +276,29 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     # the 4 factors above. We will drop accruals computation to match.
 
     # ── Valuation Metrics (Use TTM) ──
-    pretax_ann = df.get("pretax_profit", pd.Series(dtype=float))
-    pretax_ttm = df.get("pretax_profit_ttm", pretax_ann)
-    tax_rate_ttm = np.where(
-        (pretax_ttm > 0) & ni_ttm.notna(),
-        1 - ni_ttm / pretax_ttm,
-        0.20,
-    )
+    # FCF = Operating Cash Flow - Capex
+    capex_ttm = abs(df.get("capex_ttm", df.get("capex", pd.Series(0.0, index=df.index)))).fillna(0)
+    fcf_ttm = ocf_ttm - capex_ttm
+    df["fcf"] = fcf_ttm
+
     df["fcf_yield"] = np.where(
-        (ebit_ttm > 0) & (mc > 0),
-        ebit_ttm * (1 - tax_rate_ttm) / mc,
+        (mc > 0),
+        fcf_ttm / mc,
         np.nan,
+    )
+
+    # ── Acquirer's Multiple (EV/EBIT) ──
+    df["acquirers_multiple"] = np.where(
+        (df["ebit"] > 0) & (df["enterprise_value"] > 0),
+        df["enterprise_value"] / df["ebit"],
+        np.nan
+    )
+
+    # ── EV/EBITDA (Keep as secondary metric) ──
+    df["ev_ebitda"] = np.where(
+        (df["ebitda"] > 0) & (df["enterprise_value"] > 0),
+        df["enterprise_value"] / df["ebitda"],
+        np.nan
     )
 
     # ── Margins (Use TTM for freshest performance view) ──
@@ -282,9 +317,9 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     # ── Acquirer's Multiple is calculated separately in ranking.py ──
     # ranking.py uses df['enterprise_value'] and df['ebit'], which now point to TTM!
 
-    # ── Liquidity Avg Dollar Volume ──
-    df["avg_dollar_volume"] = df.get("avg_volume", pd.Series(0.0, index=df.index)) * price.fillna(0)
-
+    # ── Utility columns for Frontend (Billions) ──
+    df["market_cap_b"] = df["market_cap"] / 1e9
+    df["ev_b"] = df["enterprise_value"] / 1e9
 
     logger.info("Computed features for %d stocks", len(df))
     return df

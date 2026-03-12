@@ -180,6 +180,8 @@ export default function ScreenerClient({ data }: { data: any[] }) {
               <tr className="text-slate-500 text-[9px] uppercase tracking-[0.2em] bg-white/[0.02]">
                 <th className="px-8 py-5 font-black">Rank</th>
                 <th className="px-4 py-5 font-black">Instrument</th>
+                <th className="px-4 py-5 font-black text-right">Mkt Cap</th>
+                <th className="px-4 py-5 font-black text-right">Price</th>
                 <th className="px-4 py-5 font-black text-right">AM Multiple</th>
                 <th className="px-4 py-5 font-black text-right">Yield %</th>
                 <th className="px-4 py-5 font-black text-right">Quality</th>
@@ -203,6 +205,14 @@ export default function ScreenerClient({ data }: { data: any[] }) {
                       {item.ticker}
                     </div>
                     <div className="text-[9px] text-slate-500 font-bold uppercase tracking-[0.1em] mt-0.5">ASEAN REGION</div>
+                  </td>
+                  <td className="px-4 py-5 text-right">
+                    <div className="text-slate-200 font-mono text-xs font-bold">
+                      {(item.market_cap_b ?? (item.market_cap / 1e9))?.toLocaleString(undefined, { maximumFractionDigits: 1 })}B
+                    </div>
+                  </td>
+                  <td className="px-4 py-5 text-right">
+                    <div className="text-slate-400 font-mono text-xs font-bold">{item.price?.toLocaleString()}</div>
                   </td>
                   <td className="px-4 py-5 text-right">
                     <div className="text-sky-400 font-mono text-sm font-black">{item.acquirers_multiple?.toFixed(2)}x</div>

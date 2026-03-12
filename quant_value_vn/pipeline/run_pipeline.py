@@ -36,7 +36,8 @@ from quant_value_vn.pipeline.scores import compute_safety_scores, apply_safety_f
 from quant_value_vn.pipeline.momentum import compute_momentum_scores, remove_negative_momentum
 from quant_value_vn.config import (
     MIN_MARKET_CAP, MAX_ACQUIRERS_MULTIPLE, PORTFOLIO_SIZE,
-    MIN_ADV20, MIN_TRADING_DAYS,
+    MIN_ADV20, MIN_TRADING_DAYS, BENEISH_THRESHOLD,
+    ALTMAN_THRESHOLD, MIN_FSCORE,
 )
 
 logging.basicConfig(
@@ -180,14 +181,14 @@ def run_pipeline(
     # ── Step 6: Fraud detection ──────────────────────────────────
     logger.info("=== Step 6: Fraud detection (Beneish M-Score) ===")
     df = compute_fraud_scores(df)
-    df = remove_manipulators(df)
+    df = remove_manipulators(df, threshold=BENEISH_THRESHOLD)
     n_after_fraud = len(df)
 
     # ── Step 7: Safety scores ────────────────────────────────────
     logger.info("=== Step 7: Safety scores (Altman Z, Piotroski F) ===")
     df = compute_safety_scores(df)
     n_before_safety = len(df)
-    df = apply_safety_filters(df, min_zscore=1.81, min_fscore=5)
+    df = apply_safety_filters(df, min_zscore=ALTMAN_THRESHOLD, min_fscore=MIN_FSCORE)
     logger.info("Safety filters: %d → %d", n_before_safety, len(df))
 
     # ── Step 8: Quality ranking ──────────────────────────────────
@@ -280,7 +281,7 @@ def main():
     if result is not None:
         show = [
             "ticker", "combined_rank", "acquirers_multiple", "quality_score",
-            "beneish_mscore", "market_cap_B", "pe", "pb",
+            "beneish_mscore", "market_cap_B", "price", "pe", "pb",
             "ROA_5yr_avg", "ROC_5yr_avg", "FCF_assets_5yr_avg", "GM_stability", "piotroski_fscore", "debt_equity",
         ]
         avail = [c for c in show if c in result.columns]

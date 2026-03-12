@@ -24,7 +24,7 @@ SCRAPER_WORKERS = 10         # parallel threads for ingestion
 DEFAULT_EXCHANGES = ["HOSE", "HNX", "UPCOM"]
 
 # ── Universe Filters ─────────────────────────────────────────────────
-MIN_MARKET_CAP = 500e9        # 500 billion VND
+MIN_MARKET_CAP = 350e9        # 350 billion VND
 MAX_ACQUIRERS_MULTIPLE = 50   # cap AM outliers
 MAX_DEBT_EQUITY = 3.0         # leverage limit
 
@@ -33,8 +33,10 @@ MIN_ADV20 = 5e9               # 5 billion VND average daily value (20-day)
 MIN_TRADING_DAYS = 50         # minimum trading days out of 60
 PREFILTER_LOOKBACK_DAYS = 60  # days to look back for liquidity check
 
-# ── Fraud Detection ──────────────────────────────────────────────────
+# ── Fraud & Bankruptcy Detection ──────────────────────────────────────
 BENEISH_THRESHOLD = -1.78     # M-Score cutoff (> threshold = manipulator)
+ALTMAN_THRESHOLD = 1.8        # Z-Score cutoff (<= 1.8 = distress)
+MIN_FSCORE = 6                # F-Score cutoff (< 6 = weak)
 
 # ── Portfolio ────────────────────────────────────────────────────────
 PORTFOLIO_SIZE = 30           # top-N equal weight

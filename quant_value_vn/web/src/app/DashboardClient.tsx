@@ -146,6 +146,7 @@ export default function DashboardClient({ rankings, runs }: { rankings: any[], r
               <thead>
                 <tr className="text-slate-500 text-[9px] uppercase tracking-[0.2em]">
                   <th className="px-6 py-4 font-black">Instrument</th>
+                  <th className="px-4 py-4 font-black text-right">Mkt Cap</th>
                   <th className="px-4 py-4 font-black text-right">AM</th>
                   <th className="px-4 py-4 font-black text-right">Qual</th>
                   <th className="px-6 py-4 font-black text-right">M-Score</th>
@@ -162,6 +163,7 @@ export default function DashboardClient({ rankings, runs }: { rankings: any[], r
                         Rank #{item.combined_rank}
                       </div>
                     </td>
+                    <td className="px-4 py-5 text-right font-mono text-[10px] text-slate-400">{(item.market_cap_B || item.market_cap_b)?.toFixed(0)}B</td>
                     <td className="px-4 py-5 text-right font-mono text-xs text-slate-300">{item.acquirers_multiple?.toFixed(2)}x</td>
                     <td className="px-4 py-5 text-right font-mono text-xs text-slate-300">{item.quality_score?.toFixed(0)}</td>
                     <td className="px-6 py-5">

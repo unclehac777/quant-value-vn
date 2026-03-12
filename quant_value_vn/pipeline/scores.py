@@ -10,6 +10,8 @@ Both are used as safety checks in the Quantitative Value framework.
 
 import logging
 
+from quant_value_vn.config import BENEISH_THRESHOLD, ALTMAN_THRESHOLD, MIN_FSCORE
+
 import numpy as np
 import pandas as pd
 
@@ -98,7 +100,7 @@ def compute_altman_zscore(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def remove_distressed(
-    df: pd.DataFrame, min_zscore: float = 1.5
+    df: pd.DataFrame, min_zscore: float = ALTMAN_THRESHOLD
 ) -> pd.DataFrame:
     """
     Remove stocks with high bankruptcy risk (Z-Score < threshold).
@@ -202,9 +204,11 @@ def compute_piotroski_fscore(df: pd.DataFrame) -> pd.DataFrame:
     f4 = (ocf > ni).astype(int)
 
     # ── LEVERAGE & LIQUIDITY (3 points) ──────────────────────────
-    # 5. ∆Long-term Debt < 0 (reduced leverage)
-    # If debt decreased or stayed same = good
-    f5 = (lt_debt <= lt_debt_prev).astype(int)
+    # 5. ∆Long-term Debt Ratio < 0 (reduced leverage)
+    # leverage = LT Debt / Total Assets
+    lt_debt_ratio = lt_debt / ta.replace(0, np.nan)
+    lt_debt_ratio_prev = lt_debt_prev / ta_prev.replace(0, np.nan)
+    f5 = (lt_debt_ratio <= lt_debt_ratio_prev).astype(int)
 
     # 6. ∆Current Ratio > 0 (improved liquidity)
     cr = ca / cl.replace(0, np.nan)
@@ -242,7 +246,7 @@ def compute_piotroski_fscore(df: pd.DataFrame) -> pd.DataFrame:
     df["f_cfo_positive"] = f2
     df["f_roa_improved"] = f3
     df["f_accrual_quality"] = f4
-    df["f_leverage_improved"] = f5
+    df["f_leverage_ratio_improved"] = f5
     df["f_liquidity_improved"] = f6
     df["f_no_dilution"] = f7
     df["f_margin_improved"] = f8
@@ -267,7 +271,7 @@ def compute_piotroski_fscore(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def remove_weak_fscore(
-    df: pd.DataFrame, min_fscore: int = 5
+    df: pd.DataFrame, min_fscore: int = MIN_FSCORE
 ) -> pd.DataFrame:
     """
     Remove stocks with weak financial strength (F-Score < threshold).

@@ -52,8 +52,8 @@ def get_cached(ticker: str, max_age_hours: float = DEFAULT_MAX_AGE_HOURS) -> Opt
         if age_hours > max_age_hours:
             return None
             
-        # Ensure cache contains the new 5-year schema data
-        if "revenue_y1" not in entry:
+        # Ensure cache contains the new 5-year schema data and CafeF indices
+        if "revenue_y1" not in entry or "market_cap_cafef" not in entry:
             return None
 
         # Remove internal metadata before returning
