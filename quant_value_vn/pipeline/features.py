@@ -54,30 +54,23 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df["net_income"] = ni_ttm
     df["operating_cash_flow"] = ocf_ttm
     
-    # ── Strict EBIT (Operating Earnings) ──
-    # EBIT = Revenue - COGS - SGA - Depreciation - Amortization
-    def _calc_ebit(rev, gp, sga, dep, am):
-        cogs = rev - gp
+    # EBIT = Gross Profit - SGA
+    # Note: In VAS, depreciation is already included in COGS and SGA, 
+    # so subtracting it again would be double-counting.
+    def _calc_ebit(gp, sga):
         # Fill missing with 0 for expenses
         sga = sga.fillna(0)
-        dep = dep.fillna(0)
-        am = am.fillna(0)
-        return rev - cogs - sga - dep - am
+        return gp - sga
 
-    sga_ann = df.get("sga", pd.Series(0.0, index=df.index)).fillna(
+    sga_ann = df.get("sga", pd.Series(np.nan, index=df.index)).fillna(
         df.get("selling_expense", pd.Series(0.0, index=df.index)).fillna(0) + 
         df.get("admin_expense", pd.Series(0.0, index=df.index)).fillna(0)
     )
-    dep_ann = abs(df.get("depreciation", pd.Series(0.0, index=df.index))).fillna(0)
-    am_ann = abs(df.get("amortization", pd.Series(0.0, index=df.index))).fillna(0)
-    
-    ebit_ann = _calc_ebit(rev_ann, gp_ann, sga_ann, dep_ann, am_ann)
+    ebit_ann = _calc_ebit(gp_ann, sga_ann)
     
     sga_ttm = df.get("sga_ttm", sga_ann)
-    dep_ttm = abs(df.get("depreciation_ttm", dep_ann)).fillna(0)
-    am_ttm = abs(df.get("amortization_ttm", am_ann)).fillna(0)
     
-    ebit_ttm = _calc_ebit(rev_ttm, gp_ttm, sga_ttm, dep_ttm, am_ttm)
+    ebit_ttm = _calc_ebit(gp_ttm, sga_ttm)
     
     df["ebit"] = ebit_ttm
 
@@ -132,8 +125,10 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df["working_capital"] = ca - cl
 
     # ── Invested Capital ──
-    ppe = df.get("ppe", pd.Series(dtype=float)).fillna(0)
-    df["invested_capital"] = df["working_capital"] + ppe
+    # Net Invested Capital = Working Capital + Net Fixed Assets (Tangible + Intangible)
+    ppe = df.get("ppe", pd.Series(0.0, index=df.index)).fillna(0)
+    intangibles = df.get("intangible_assets", pd.Series(0.0, index=df.index)).fillna(0)
+    df["invested_capital"] = df["working_capital"] + ppe + intangibles
     invested_capital = df["invested_capital"]
 
     # ── Standard Quality Metrics (Use Annual) ──
@@ -203,16 +198,21 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     for i in range(5):
         suffix = "" if i == 0 else f"_y{i}"
         
-        op = df.get(f"operating_profit{suffix}", pd.Series(dtype=float))
-        ie = df.get(f"interest_expense{suffix}", pd.Series(dtype=float)).fillna(0).clip(lower=0)
-        ebit_yr = np.where(op.notna(), op + ie, np.nan)
+        # Use consistent EBIT: GP - SGA
+        gp_yr = df.get(f"gross_profit{suffix}", pd.Series(dtype=float))
+        sga_yr = df.get(f"sga{suffix}", pd.Series(np.nan, index=df.index)).fillna(
+            df.get(f"selling_expense{suffix}", pd.Series(0.0, index=df.index)).fillna(0) + 
+            df.get(f"admin_expense{suffix}", pd.Series(0.0, index=df.index)).fillna(0)
+        )
+        ebit_yr = gp_yr - sga_yr
         
         ca_yr = df.get(f"current_assets{suffix}", pd.Series(dtype=float)).fillna(0)
         cl_yr = df.get(f"current_liabilities{suffix}", pd.Series(dtype=float)).fillna(0)
-        wc_yr = np.where(ca_yr.notna() & cl_yr.notna(), ca_yr - cl_yr, np.nan)
+        wc_yr = ca_yr - cl_yr
         
         ppe_yr = df.get(f"ppe{suffix}", pd.Series(dtype=float)).fillna(0)
-        ic_yr = wc_yr + ppe_yr
+        inta_yr = df.get(f"intangible_assets{suffix}", pd.Series(0.0, index=df.index)).fillna(0)
+        ic_yr = wc_yr + ppe_yr + inta_yr
         
         pretax = df.get(f"pretax_profit{suffix}", pd.Series(dtype=float))
         ni = df.get(f"net_income_parent{suffix}", df.get(f"net_income{suffix}", pd.Series(dtype=float)))
@@ -223,7 +223,7 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
             0.20,
         )
         
-        if ebit_yr is not None and not np.isnan(ebit_yr).all():
+        if not ebit_yr.isna().all():
             df[f"_roc_tmp{suffix}"] = np.where(
                 (ebit_yr > 0) & (ic_yr > 0),
                 ebit_yr * (1 - tax_rate) / ic_yr,

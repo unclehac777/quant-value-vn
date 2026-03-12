@@ -356,8 +356,13 @@ async def fetch_balance_sheet(
             res["inventory"] = val
         elif lbl.lstrip().startswith("a") and "tài sản ngắn hạn" in lbl:
             res["current_assets"] = val
-        elif "hữu hình" in lbl and "nguyên giá" not in lbl and "ppe" not in res:
-            res["ppe"] = val
+        elif "tài sản cố định" in lbl and ("hữu hình" in lbl or "vô hình" in lbl or lbl.lstrip().startswith("ii")):
+            if "hữu hình" in lbl and "nguyên giá" not in lbl:
+                res["ppe"] = val
+            elif "vô hình" in lbl and "nguyên giá" not in lbl:
+                res["intangible_assets"] = val
+            elif lbl.lstrip().startswith("ii") and "fixed_assets" not in res:
+                res["fixed_assets"] = val
         elif ("hao mòn lũy kế" in lbl or "khấu hao lũy kế" in lbl) and "depreciation_accumulated" not in res:
             res["depreciation_accumulated"] = val
         elif "vay và nợ" in lbl and "ngắn hạn" in lbl:
@@ -372,6 +377,10 @@ async def fetch_balance_sheet(
             res["total_liabilities"] = val
         elif lbl.lstrip().startswith("d") and "vốn chủ sở hữu" in lbl:
             res["equity"] = val
+        elif "lợi ích cổ đông không kiểm soát" in lbl and "minority_interest" not in res:
+            res["minority_interest"] = val
+        elif "cơ cấu vốn" in lbl and "ưu đãi" in lbl:
+             res["preferred_stock"] = val
         elif "lợi nhuận sau thuế chưa phân phối" in lbl and "retained_earnings" not in res:
             res["retained_earnings"] = val
         elif "lợi nhuận chưa phân phối" in lbl and "retained_earnings" not in res:
@@ -681,8 +690,13 @@ async def fetch_quarterly_balance_sheet(
             res["inventory"] = val
         elif lbl.lstrip().startswith("a") and "tài sản ngắn hạn" in lbl:
             res["current_assets"] = val
-        elif "hữu hình" in lbl and "nguyên giá" not in lbl and "ppe" not in res:
-            res["ppe"] = val
+        elif "tài sản cố định" in lbl and ("hữu hình" in lbl or "vô hình" in lbl or lbl.lstrip().startswith("ii")):
+            if "hữu hình" in lbl and "nguyên giá" not in lbl:
+                res["ppe"] = val
+            elif "vô hình" in lbl and "nguyên giá" not in lbl:
+                res["intangible_assets"] = val
+            elif lbl.lstrip().startswith("ii") and "fixed_assets" not in res:
+                res["fixed_assets"] = val
         elif ("hao mòn lũy kế" in lbl or "khấu hao lũy kế" in lbl) and "depreciation_accumulated" not in res:
             res["depreciation_accumulated"] = val
         elif "vay và nợ" in lbl and "ngắn hạn" in lbl:
@@ -697,6 +711,10 @@ async def fetch_quarterly_balance_sheet(
             res["total_liabilities"] = val
         elif lbl.lstrip().startswith("d") and "vốn chủ sở hữu" in lbl:
             res["equity"] = val
+        elif "lợi ích cổ đông không kiểm soát" in lbl and "minority_interest" not in res:
+            res["minority_interest"] = val
+        elif "cơ cấu vốn" in lbl and "ưu đãi" in lbl:
+             res["preferred_stock"] = val
         elif "lợi nhuận sau thuế chưa phân phối" in lbl and "retained_earnings" not in res:
             res["retained_earnings"] = val
         elif "lợi nhuận chưa phân phối" in lbl and "retained_earnings" not in res:

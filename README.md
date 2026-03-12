@@ -60,8 +60,10 @@ cp .env.example .env
 python -m quant_value_vn.pipeline.run_pipeline
 
 streamlit run quant_value_vn/dashboard/streamlit_app.py
-```
+
 uvicorn quant_value_vn.app.main:app --host 0.0.0.0 --port 8000
+
+```
 
 Opens at `http://localhost:8501` with all features: view results, run screener, charts, watchlist, historical comparison.
 
