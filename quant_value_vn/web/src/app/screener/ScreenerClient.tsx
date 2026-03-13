@@ -11,7 +11,9 @@ import {
   ExclamationCircleIcon,
   MagnifyingGlassIcon,
   AdjustmentsHorizontalIcon,
-  PlayIcon
+  PlayIcon,
+  ChevronUpIcon,
+  ChevronDownIcon
 } from "@heroicons/react/24/outline";
 
 export default function ScreenerClient({ data }: { data: any[] }) {
@@ -22,10 +24,40 @@ export default function ScreenerClient({ data }: { data: any[] }) {
   const [scanning, setScanning] = useState(false);
   const [status, setStatus] = useState<{ type: 'track' | 'scan', msg: string, success: boolean } | null>(null);
 
+  const [sortColumn, setSortColumn] = useState<string>("combined_rank");
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
   const filtered = data.filter((item) => {
     if (minQuality > 0 && item.quality_score < minQuality) return false;
     if (maxAM < 50 && item.acquirers_multiple > maxAM) return false;
     return true;
+  });
+
+  const handleSort = (column: string) => {
+    if (sortColumn === column) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  };
+
+  const sortedData = [...filtered].sort((a, b) => {
+    let valA = a[sortColumn];
+    let valB = b[sortColumn];
+
+    // Handle nulls
+    if (valA === null || valA === undefined) return 1;
+    if (valB === null || valB === undefined) return -1;
+
+    if (typeof valA === 'string' && typeof valB === 'string') {
+      valA = valA.toLowerCase();
+      valB = valB.toLowerCase();
+    }
+
+    if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+    if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+    return 0;
   });
 
   const showToast = (type: 'track' | 'scan', msg: string, success: boolean = true) => {
@@ -177,21 +209,23 @@ export default function ScreenerClient({ data }: { data: any[] }) {
             className="w-full text-left border-collapse min-w-[1000px]"
           >
             <thead>
-              <tr className="text-slate-500 text-[9px] uppercase tracking-[0.2em] bg-white/[0.02]">
-                <th className="px-8 py-5 font-black">Rank</th>
-                <th className="px-4 py-5 font-black">Instrument</th>
-                <th className="px-4 py-5 font-black text-right">Mkt Cap</th>
-                <th className="px-4 py-5 font-black text-right">Price</th>
-                <th className="px-4 py-5 font-black text-right">AM Multiple</th>
-                <th className="px-4 py-5 font-black text-right">Yield %</th>
-                <th className="px-4 py-5 font-black text-right">Quality</th>
-                <th className="px-4 py-5 font-black text-right">M-Score</th>
-                <th className="px-4 py-5 font-black text-right">P/B</th>
+              <tr className="text-slate-500 text-[9px] uppercase tracking-[0.2em] bg-white/[0.02] select-none">
+                <SortableHeader label="Rank" column="combined_rank" currentSort={sortColumn} direction={sortDirection} onSort={handleSort} className="px-8" />
+                <SortableHeader label="Instrument" column="ticker" currentSort={sortColumn} direction={sortDirection} onSort={handleSort} />
+                <SortableHeader label="Mkt Cap" column="market_cap_b" currentSort={sortColumn} direction={sortDirection} onSort={handleSort} align="right" />
+                <SortableHeader label="EV (B)" column="ev_b" currentSort={sortColumn} direction={sortDirection} onSort={handleSort} align="right" />
+                <SortableHeader label="EBIT (B)" column="ebit" currentSort={sortColumn} direction={sortDirection} onSort={handleSort} align="right" />
+                <SortableHeader label="Price" column="price" currentSort={sortColumn} direction={sortDirection} onSort={handleSort} align="right" />
+                <SortableHeader label="AM Multiple" column="acquirers_multiple" currentSort={sortColumn} direction={sortDirection} onSort={handleSort} align="right" />
+                <SortableHeader label="Yield %" column="ebit_ev" currentSort={sortColumn} direction={sortDirection} onSort={handleSort} align="right" />
+                <SortableHeader label="Quality" column="quality_score" currentSort={sortColumn} direction={sortDirection} onSort={handleSort} align="right" />
+                <SortableHeader label="M-Score" column="beneish_mscore" currentSort={sortColumn} direction={sortDirection} onSort={handleSort} align="right" />
+                <SortableHeader label="P/B" column="pb" currentSort={sortColumn} direction={sortDirection} onSort={handleSort} align="right" />
                 <th className="px-8 py-5 font-black text-right">Execution</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {filtered.map((item) => (
+              {sortedData.map((item) => (
                 <motion.tr 
                   variants={rowVariants}
                   key={item.ticker} 
@@ -209,6 +243,16 @@ export default function ScreenerClient({ data }: { data: any[] }) {
                   <td className="px-4 py-5 text-right">
                     <div className="text-slate-200 font-mono text-xs font-bold">
                       {(item.market_cap_b ?? (item.market_cap / 1e9))?.toLocaleString(undefined, { maximumFractionDigits: 1 })}B
+                    </div>
+                  </td>
+                  <td className="px-4 py-5 text-right">
+                    <div className="text-slate-200 font-mono text-xs font-bold">
+                      {(item.ev_b ?? (item.enterprise_value / 1e9))?.toLocaleString(undefined, { maximumFractionDigits: 1 })}B
+                    </div>
+                  </td>
+                  <td className="px-4 py-5 text-right">
+                    <div className="text-slate-200 font-mono text-xs font-bold">
+                      {(item.ebit / 1e9)?.toLocaleString(undefined, { maximumFractionDigits: 1 })}B
                     </div>
                   </td>
                   <td className="px-4 py-5 text-right">
@@ -263,5 +307,40 @@ export default function ScreenerClient({ data }: { data: any[] }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function SortableHeader({ 
+  label, 
+  column, 
+  currentSort, 
+  direction, 
+  onSort, 
+  align = "left",
+  className = "px-4"
+}: { 
+  label: string, 
+  column: string, 
+  currentSort: string, 
+  direction: 'asc' | 'desc', 
+  onSort: (col: string) => void,
+  align?: "left" | "right",
+  className?: string
+}) {
+  const isActive = currentSort === column;
+  
+  return (
+    <th 
+      className={`${className} py-5 font-black cursor-pointer group/th hover:text-white transition-colors`}
+      onClick={() => onSort(column)}
+    >
+      <div className={`flex items-center gap-1.5 ${align === "right" ? "justify-end" : "justify-start"}`}>
+        <span>{label}</span>
+        <div className="flex flex-col -space-y-1 opacity-0 group-hover/th:opacity-50 transition-opacity">
+          <ChevronUpIcon className={`w-2 h-2 ${isActive && direction === 'asc' ? 'text-sky-400 opacity-100' : ''}`} />
+          <ChevronDownIcon className={`w-2 h-2 ${isActive && direction === 'desc' ? 'text-sky-400 opacity-100' : ''}`} />
+        </div>
+      </div>
+    </th>
   );
 }
