@@ -1,3 +1,22 @@
+Metadata-Version: 2.4
+Name: quant-value-vn
+Version: 2.0.0
+Summary: Vietnam Quantitative Value Stock Screener
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: streamlit
+Requires-Dist: supabase
+Requires-Dist: plotly
+Requires-Dist: pandas
+Requires-Dist: beautifulsoup4
+Requires-Dist: requests
+Requires-Dist: python-dotenv
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: pydantic
+Requires-Dist: lxml
+Requires-Dist: numpy
+
 # Vietnam Quantitative Value Stock Screener
 
 A comprehensive quantitative investment system implementing Tobias Carlisle & Wesley Gray's **"Quantitative Value"** framework, specifically adapted for the Vietnam stock market (HOSE, HNX, and UPCOM). 
@@ -59,28 +78,12 @@ pip install -e .
     ```bash
     cp .env.example .env
     ```
-    *Note: The backend/pipeline uses `.env` in the root directory.*
 
 ### 3. Web Frontend (Next.js)
 
-The web frontend requires **Node.js 18+**. If you don't have Node.js or want to manage versions properly, we recommend using **NVM**.
-
-#### Install NVM (Linux)
-```bash
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-# Restart terminal or run:
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-```
-
-#### Install Node & Dependencies
 ```bash
 cd quant_value_vn/web
-nvm install 20
-nvm use 20
-
-# Install with legacy-peer-deps to handle Tremor/React conflicts
-npm install --legacy-peer-deps
+npm install
 ```
 
 ## 🚀 Usage

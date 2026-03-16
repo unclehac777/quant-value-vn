@@ -5,13 +5,19 @@ All constants, thresholds, and environment variables in one place.
 """
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Search for .env in the project root or the package directory
+base_path = Path(__file__).resolve().parent
+load_dotenv(dotenv_path=base_path / ".env")         # quant_value_vn/.env
+load_dotenv(dotenv_path=base_path.parent / ".env")  # root/.env
+load_dotenv()                                       # CWD
 
 # ── Supabase ─────────────────────────────────────────────────────────
-SUPABASE_URL: str = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY: str = os.environ.get("SUPABASE_KEY", "")
+# Check for both standard and Next.js style env vars
+SUPABASE_URL: str = os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL", "")
+SUPABASE_KEY: str = os.environ.get("SUPABASE_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_KEY", "")
 
 # ── Scraper ──────────────────────────────────────────────────────────
 CAFEF_BASE_URL = "https://s.cafef.vn"
