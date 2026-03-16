@@ -5,3 +5,8 @@ pandas
 beautifulsoup4
 requests
 python-dotenv
+fastapi
+uvicorn
+pydantic
+lxml
+numpy

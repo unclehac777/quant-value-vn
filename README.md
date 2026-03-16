@@ -46,6 +46,9 @@ source venv/bin/activate  # Linux/macOS
 
 # Install dependencies
 pip install -r requirements.txt
+
+# Install the package in editable mode
+pip install -e .
 ```
 
 ### 2. Configure Environment

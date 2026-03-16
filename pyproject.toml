@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quant-value-vn"
+version = "2.0.0"
+description = "Vietnam Quantitative Value Stock Screener"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit",
+    "supabase",
+    "plotly",
+    "pandas",
+    "beautifulsoup4",
+    "requests",
+    "python-dotenv",
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "lxml",
+    "numpy",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["quant_value_vn*"]
