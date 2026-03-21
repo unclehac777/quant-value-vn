@@ -103,13 +103,14 @@ def compute_beneish_mscore(d: Dict) -> Optional[float]:
         ocf = d.get("operating_cash_flow")
         tata = (ni - ocf) / ta if (ocf is not None and ta > 0) else 0
 
-        # M-Score formula (Beneish 1999)
+        # M-Score formula (Beneish 1999) — Vietnam adapted coefficients
+        # Per metrics.md: coefficients updated for VAS reporting standards
         m = (
-            -4.84
+            -4.54
             + 0.920 * dsri
-            + 0.528 * gmi
+            + 0.525 * gmi
             + 0.404 * aqi
-            + 0.892 * sgi
+            + 0.592 * sgi
             + 0.115 * depi
             - 0.172 * sgai
             + 4.679 * tata

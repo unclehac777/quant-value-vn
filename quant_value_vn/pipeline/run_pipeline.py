@@ -34,6 +34,8 @@ from quant_value_vn.pipeline.value import compute_acquirers_multiple
 from quant_value_vn.pipeline.ranking import remove_sectors, filter_universe, rank_stocks
 from quant_value_vn.pipeline.scores import compute_safety_scores, apply_safety_filters
 from quant_value_vn.pipeline.momentum import compute_momentum_scores, remove_negative_momentum
+from quant_value_vn.pipeline.distress import compute_pfd_scores, remove_high_pfd
+from quant_value_vn.pipeline.vietnam_flags import add_vietnam_flags, filter_by_vietnam_flags
 from quant_value_vn.config import (
     MIN_MARKET_CAP, MAX_ACQUIRERS_MULTIPLE, PORTFOLIO_SIZE,
     MIN_ADV20, MIN_TRADING_DAYS, BENEISH_THRESHOLD,
@@ -190,6 +192,22 @@ def run_pipeline(
     n_before_safety = len(df)
     df = apply_safety_filters(df, min_zscore=ALTMAN_THRESHOLD, min_fscore=MIN_FSCORE)
     logger.info("Safety filters: %d → %d", n_before_safety, len(df))
+
+    # ── Step 7b: Distress risk (PFD Model) ───────────────────────
+    # Note: PFD requires external market data (volatility, returns)
+    # If market_data is not provided, skip this step
+    logger.info("=== Step 7b: Distress risk (PFD Model) ===")
+    # Placeholder: market_data should come from HOSE/HNX API integration
+    # market_data = fetch_market_data()  # TODO: Implement
+    # df = compute_pfd_scores(df, market_data)
+    # df = remove_high_pfd(df, threshold=0.05)
+    logger.info("PFD model: SKIPPED (requires market data integration)")
+
+    # ── Step 7c: Vietnam-specific validation flags ───────────────
+    logger.info("=== Step 7c: Vietnam-specific validation flags ===")
+    df = add_vietnam_flags(df)
+    # Filter out stocks with critical flags (auditor qualification, etc.)
+    df = filter_by_vietnam_flags(df, exclude_flags=["AUDITOR_QUALIFICATION"], max_flags=2)
 
     # ── Step 8: Quality ranking ──────────────────────────────────
     logger.info("=== Step 8: Quality ranking ===")

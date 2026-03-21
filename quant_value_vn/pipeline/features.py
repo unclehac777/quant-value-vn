@@ -100,22 +100,27 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df["market_cap"] = mc_cafef.fillna(computed_mc)
 
     # ── Debt & Cash aggregates ──
+    # Include short-term investments in cash (VAS codes 111, 112, 128)
     df["total_debt"] = (
         df.get("short_term_debt", pd.Series(0.0, index=df.index)).fillna(0)
         + df.get("long_term_debt", pd.Series(0.0, index=df.index)).fillna(0)
     )
+    # Per metrics.md: For Vietnam, conservative approach treats all cash as excess
     df["total_cash"] = (
         df.get("cash", pd.Series(0.0, index=df.index)).fillna(0)
         + df.get("short_term_investments", pd.Series(0.0, index=df.index)).fillna(0)
     )
 
-    # ── Enterprise Value ──
+    # ── Enterprise Value (TEV) — Vietnam Adapted ──
+    # Per metrics.md: TEV = Market Cap + Total Debt - Excess Cash + Minority Interest
+    # Vietnam adaptation: All cash treated as excess (conservative)
+    # Note: Include finance lease liabilities (343) in debt if available
     mc = df["market_cap"]
     mi = df.get("minority_interest", pd.Series(0.0, index=df.index)).fillna(0)
     ps = df.get("preferred_stock", pd.Series(0.0, index=df.index)).fillna(0)
     td = df.get("total_debt", pd.Series(0.0, index=df.index)).fillna(0)
     tc = df.get("total_cash", pd.Series(0.0, index=df.index)).fillna(0)
-    
+
     ev = mc + td + mi + ps - tc
     df["enterprise_value"] = np.where(mc > 0, ev.clip(lower=0), np.nan)
 
@@ -151,9 +156,41 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df["cfo_to_assets"] = np.where(
         (ta > 0) & ocf_ann.notna(), ocf_ann / ta, np.nan
     )
+
+    # ── Accruals: Scaled Total Accruals (STA) — Vietnam Adapted ──
+    # Per metrics.md: STA = (ΔCA - ΔCash - ΔCL + ΔSTD - ΔTaxPayable - Depreciation) / TA(t-1)
+    # This is more sophisticated than simple (NI - CFO) / TA
+    ta_prev = df.get("total_assets_prev", pd.Series(dtype=float))
+    ca = df.get("current_assets", pd.Series(0.0, index=df.index)).fillna(0)
+    ca_prev = df.get("current_assets_prev", pd.Series(0.0, index=df.index)).fillna(0)
+    cash = df.get("cash", pd.Series(0.0, index=df.index)).fillna(0)
+    cash_prev = df.get("cash_prev", pd.Series(0.0, index=df.index)).fillna(0)
+    cl = df.get("current_liabilities", pd.Series(0.0, index=df.index)).fillna(0)
+    cl_prev = df.get("current_liabilities_prev", pd.Series(0.0, index=df.index)).fillna(0)
+    std = (
+        df.get("short_term_debt", pd.Series(0.0, index=df.index)).fillna(0) +
+        df.get("long_term_debt", pd.Series(0.0, index=df.index)).fillna(0)  # Include all debt if ST not separated
+    )
+    std_prev = (
+        df.get("short_term_debt_prev", pd.Series(0.0, index=df.index)).fillna(0) +
+        df.get("long_term_debt_prev", pd.Series(0.0, index=df.index)).fillna(0)
+    )
+    tax_payable = df.get("tax_payable", pd.Series(0.0, index=df.index)).fillna(0)
+    tax_payable_prev = df.get("tax_payable_prev", pd.Series(0.0, index=df.index)).fillna(0)
+    dep = df.get("depreciation", pd.Series(0.0, index=df.index)).fillna(0)
+
+    delta_ca = ca - ca_prev
+    delta_cash = cash - cash_prev
+    delta_cl = cl - cl_prev
+    delta_std = std - std_prev
+    delta_tax = tax_payable - tax_payable_prev
+
+    # STA numerator: ΔCA - ΔCash - ΔCL + ΔSTD - ΔTaxPayable - Depreciation
+    sta_numer = delta_ca - delta_cash - delta_cl + delta_std - delta_tax - dep
+    # Denominator: prior year total assets
     df["accruals"] = np.where(
-        (ta > 0) & ni_ann.notna() & ocf_ann.notna(),
-        (ni_ann - ocf_ann) / ta,
+        (ta_prev > 0) & ta_prev.notna(),
+        sta_numer / ta_prev,
         np.nan,
     )
 
@@ -163,25 +200,24 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df["ebitda"] = ebit_ttm + dep_ttm
 
 
-    # ── Quality Metrics (5-Year Averages) ──
-    # Helper to calculate n-year averages safely
-    def _avg_5yr(base_col: str) -> pd.Series:
-        cols = [base_col] + [f"{base_col}_y{i}" for i in range(1, 5)]
-        valid_cols = [c for c in cols if c in df.columns]
-        if not valid_cols:
-            return pd.Series(np.nan, index=df.index)
-        # Average across the columns that exist for each row (skipping NaNs)
-        return df[valid_cols].mean(axis=1)
+    # ── Quality Metrics (5-Year Averages) — Vietnam Adapted ──
+    # Note: CafeF typically provides only 4 years of historical data.
+    # We calculate averages using whatever years are available (min 2 years).
+    # metrics.md specifies 8-year averages, but Vietnam data history often limited.
 
-    def _std_5yr(base_col: str) -> pd.Series:
-        cols = [base_col] + [f"{base_col}_y{i}" for i in range(1, 5)]
-        valid_cols = [c for c in cols if c in df.columns]
-        if not valid_cols:
-            return pd.Series(np.nan, index=df.index)
-        return df[valid_cols].std(axis=1)
+    def _count_available_years(base_col: str, max_years: int = 5) -> tuple[list[str], int]:
+        """Count how many years of data are available for a column."""
+        cols = []
+        for i in range(max_years):
+            suffix = "" if i == 0 else f"_y{i}"
+            key = f"{base_col}{suffix}"
+            if key in df.columns and df[key].notna().any():
+                cols.append(key)
+        return cols, len(cols)
 
     # 1. ROA 5-year average
     # Compute ROA for each year first, then average
+    # Note: Uses whatever years are available (min 2 years for valid average)
     roa_cols = []
     for i in range(5):
         suffix = "" if i == 0 else f"_y{i}"
@@ -190,48 +226,58 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
         if ni is not None and ta_yr is not None and not ta_yr.empty:
             df[f"_roa_tmp{suffix}"] = np.where(ta_yr > 0, ni / ta_yr, np.nan)
             roa_cols.append(f"_roa_tmp{suffix}")
-    
-    df["ROA_5yr_avg"] = df[roa_cols].mean(axis=1) if roa_cols else np.nan
 
-    # 2. ROC 5-year average
+    if len(roa_cols) >= 2:
+        df["ROA_5yr_avg"] = df[roa_cols].mean(axis=1)
+        df["ROA_years_count"] = len(roa_cols)
+    else:
+        df["ROA_5yr_avg"] = np.nan
+        df["ROA_years_count"] = len(roa_cols)
+
+    # 2. ROC 5-year average (Greenblatt) — Vietnam Adapted
+    # Per metrics.md: ROC = EBIT / (Net Fixed Assets + NWC excluding cash)
+    # Where EBIT = Net Income + Tax + Interest (Vietnam adaptation)
     roc_cols = []
     for i in range(5):
         suffix = "" if i == 0 else f"_y{i}"
-        
-        # Use consistent EBIT: GP - SGA
-        gp_yr = df.get(f"gross_profit{suffix}", pd.Series(dtype=float))
-        sga_yr = df.get(f"sga{suffix}", pd.Series(np.nan, index=df.index)).fillna(
-            df.get(f"selling_expense{suffix}", pd.Series(0.0, index=df.index)).fillna(0) + 
-            df.get(f"admin_expense{suffix}", pd.Series(0.0, index=df.index)).fillna(0)
-        )
-        ebit_yr = gp_yr - sga_yr
-        
+
+        # EBIT calculation (Vietnam adapted): Net Income + Tax + Interest
+        ni_yr = df.get(f"net_income_parent{suffix}", df.get(f"net_income{suffix}", pd.Series(dtype=float)))
+        tax_yr = df.get(f"tax_expense{suffix}", pd.Series(0.0, index=df.index)).fillna(0)
+        # Interest expense: try specific field, fallback to financial expense
+        interest_yr = df.get(f"interest_expense{suffix}", df.get(f"financial_expense{suffix}", pd.Series(0.0, index=df.index))).fillna(0)
+        ebit_yr = ni_yr.fillna(0) + tax_yr + interest_yr
+
+        # Net Fixed Assets: PPE (net of depreciation)
+        # Per metrics.md: Net Fixed Assets = Gross PPE - Accumulated Depreciation
+        ppe_gross = df.get(f"ppe{suffix}", df.get(f"fixed_assets{suffix}", pd.Series(0.0, index=df.index))).fillna(0)
+        dep_accum = df.get(f"depreciation_accumulated{suffix}", pd.Series(0.0, index=df.index)).fillna(0)
+        net_ppe = ppe_gross - dep_accum
+
+        # NWC excluding cash: (Current Assets - Cash) - Current Liabilities
         ca_yr = df.get(f"current_assets{suffix}", pd.Series(dtype=float)).fillna(0)
+        cash_yr = df.get(f"cash{suffix}", pd.Series(0.0, index=df.index)).fillna(0)
         cl_yr = df.get(f"current_liabilities{suffix}", pd.Series(dtype=float)).fillna(0)
-        wc_yr = ca_yr - cl_yr
-        
-        ppe_yr = df.get(f"ppe{suffix}", pd.Series(dtype=float)).fillna(0)
-        inta_yr = df.get(f"intangible_assets{suffix}", pd.Series(0.0, index=df.index)).fillna(0)
-        ic_yr = wc_yr + ppe_yr + inta_yr
-        
-        pretax = df.get(f"pretax_profit{suffix}", pd.Series(dtype=float))
-        ni = df.get(f"net_income_parent{suffix}", df.get(f"net_income{suffix}", pd.Series(dtype=float)))
-        
-        tax_rate = np.where(
-            (pretax > 0) & ni.notna(),
-            1 - ni / pretax,
-            0.20,
-        )
-        
+        nwc_yr = (ca_yr - cash_yr) - cl_yr
+
+        # Invested Capital = Net Fixed Assets + NWC (excluding cash)
+        ic_yr = net_ppe + nwc_yr
+
         if not ebit_yr.isna().all():
+            # ROC = EBIT / Invested Capital (pre-tax, per Greenblatt)
             df[f"_roc_tmp{suffix}"] = np.where(
                 (ebit_yr > 0) & (ic_yr > 0),
-                ebit_yr * (1 - tax_rate) / ic_yr,
+                ebit_yr / ic_yr,
                 np.nan
             )
             roc_cols.append(f"_roc_tmp{suffix}")
-            
-    df["ROC_5yr_avg"] = df[roc_cols].mean(axis=1) if roc_cols else np.nan
+
+    if len(roc_cols) >= 2:
+        df["ROC_5yr_avg"] = df[roc_cols].mean(axis=1)
+        df["ROC_years_count"] = len(roc_cols)
+    else:
+        df["ROC_5yr_avg"] = np.nan
+        df["ROC_years_count"] = len(roc_cols)
 
     # 3. FCF / Assets 5-year average
     # FCF = Operating Cash Flow - Capex
@@ -242,34 +288,48 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
         capex = df.get(f"capex{suffix}", pd.Series(0.0, index=df.index)).fillna(0)
         fcf = ocf - capex
         ta_yr = df.get(f"total_assets{suffix}", pd.Series(dtype=float))
-        
+
         if ta_yr is not None and not ta_yr.empty:
             df[f"_fcf_tmp{suffix}"] = np.where(ta_yr > 0, fcf / ta_yr, np.nan)
             fcf_cols.append(f"_fcf_tmp{suffix}")
-            
-    df["FCF_assets_5yr_avg"] = df[fcf_cols].mean(axis=1) if fcf_cols else np.nan
+
+    if len(fcf_cols) >= 2:
+        df["FCF_assets_5yr_avg"] = df[fcf_cols].mean(axis=1)
+        df["FCF_years_count"] = len(fcf_cols)
+    else:
+        df["FCF_assets_5yr_avg"] = np.nan
+        df["FCF_years_count"] = len(fcf_cols)
 
     # 4. Gross Margin Stability (5-year standard deviation)
+    # Note: Lower std dev = more stable margins = higher quality
+    # Requires min 3 years for meaningful std dev calculation
     gm_cols = []
     for i in range(5):
         suffix = "" if i == 0 else f"_y{i}"
         rev = df.get(f"revenue{suffix}", pd.Series(dtype=float))
         gp = df.get(f"gross_profit{suffix}", pd.Series(dtype=float))
-        
+
         if rev is not None and gp is not None and not rev.empty:
             df[f"_gm_tmp{suffix}"] = np.where((rev > 0) & gp.notna(), gp / rev, np.nan)
             gm_cols.append(f"_gm_tmp{suffix}")
-            
+
     # Calculate stability: we want LOWER std to match HIGHER rank
     # Use standard deviation across the calculated yearly margin columns
-    if gm_cols:
+    if len(gm_cols) >= 3:
         df["GM_stability"] = df[gm_cols].std(axis=1)
+        df["GM_years_count"] = len(gm_cols)
     else:
         df["GM_stability"] = np.nan
-        
+        df["GM_years_count"] = len(gm_cols)
+
     # Drop temp cols to keep dataframe clean
     tmp_cols = roa_cols + roc_cols + fcf_cols + gm_cols
     df.drop(columns=[c for c in tmp_cols if c in df.columns], inplace=True)
+
+    # Log data quality summary
+    logger.info("Quality metrics: ROA=%d yrs, ROC=%d yrs, FCF=%d yrs, GM=%d yrs (avg available)",
+                df["ROA_years_count"].mean(), df["ROC_years_count"].mean(),
+                df["FCF_years_count"].mean(), df["GM_years_count"].mean())
 
     # Note: Accruals formula doesn't have a 5-year average rule in the checklist, 
     # but the old checklist had it. The new rank drops it entirely in favor of 

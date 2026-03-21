@@ -40,8 +40,8 @@ MIN_TRADING_DAYS = 50         # minimum trading days out of 60
 PREFILTER_LOOKBACK_DAYS = 60  # days to look back for liquidity check
 
 # ── Fraud & Bankruptcy Detection ──────────────────────────────────────
-BENEISH_THRESHOLD = -1.78     # M-Score cutoff (> threshold = manipulator)
-ALTMAN_THRESHOLD = 1.8        # Z-Score cutoff (<= 1.8 = distress)
+BENEISH_THRESHOLD = -1.75     # M-Score cutoff (> threshold = manipulator) — Vietnam adapted
+ALTMAN_THRESHOLD = 1.5        # Z-Score cutoff (<= 1.5 = distress) — Vietnam adapted
 MIN_FSCORE = 6                # F-Score cutoff (< 6 = weak)
 
 # ── Portfolio ────────────────────────────────────────────────────────
